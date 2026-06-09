@@ -4,7 +4,7 @@ import { TopHeader } from "./components/top-header";
 import { MachinesPanel } from "./components/machines-panel";
 import { MachinesPage, defaultMachines, type Machine } from "./components/machines-page";
 import { AddMachinePage } from "./components/add-machine-page";
-import { InventoryPage, defaultInventory, type InventoryItem } from "./components/inventory-page";
+import { InventoryPage, defaultInventory, type InventoryItem, type InventoryUnit } from "./components/inventory-page";
 import { AddInventoryPage } from "./components/add-inventory-page";
 import { MachineDetailPage } from "./components/machine-detail-page";
 import { SchedulePage } from "./components/schedule-page";
@@ -30,7 +30,36 @@ export default function App() {
   const [inventory, setInventory] = useState<InventoryItem[]>(() => {
     try {
       const saved = localStorage.getItem("arizon_inventory");
-      return saved ? JSON.parse(saved) : defaultInventory;
+      if (saved) {
+        const parsed = JSON.parse(saved) as InventoryItem[];
+        return parsed.map((item) => {
+          const qty = item.quantity || 0;
+          const make = item.make || "Generic";
+          let units = item.units;
+          
+          if (!units || units.length !== qty) {
+            units = [];
+            const partNoClean = (item.partNo || "ITEM").toUpperCase().replace(/\s+/g, "-");
+            const today = new Date().toISOString().split("T")[0];
+            for (let i = 1; i <= qty; i++) {
+              const statusVal = i % 7 === 0 ? "Under Maintenance" : i % 5 === 0 ? "In Use" : "Available";
+              units.push({
+                itemId: `INV-${partNoClean}-${String(i).padStart(2, "0")}`,
+                dateRegistered: today,
+                location: "Main Warehouse",
+                status: statusVal as any
+              });
+            }
+          }
+          
+          return {
+            ...item,
+            make,
+            units
+          };
+        });
+      }
+      return defaultInventory;
     } catch (e) {
       console.error("Failed to load inventory from localStorage:", e);
       return defaultInventory;
