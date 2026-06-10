@@ -29,11 +29,12 @@ import {
   Send,
   ArrowLeft,
   ArrowRight,
-  Image
+  Image,
+  RefreshCw
 } from "lucide-react";
 import { type ScheduleRow } from "./generate-schedule-modal";
 import { defaultMachines } from "./machines-page";
-import { taskStepsMap, defaultSopSteps, type SopStep, type TrainingTask, validateStep, getSopSteps } from "./my-task-page";
+import { taskStepsMap, defaultSopSteps, type SopStep, type TrainingTask, validateStep, getSopSteps, getPrereqsForMachine, getPrereqsForSop } from "./my-task-page";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -79,7 +80,7 @@ interface ReportItem {
   type: string;
   machine: string;
   steps: SopStep[];
-  sopProgress?: Record<number, { remarks: string; qrScanned: boolean; attachmentName: string; attachmentUrl?: string }>;
+  sopProgress?: Record<number, { remarks: string; qrScanned: boolean; attachmentName: string; attachmentUrl?: string; oldPartAttachmentName?: string; oldPartAttachmentUrl?: string; newPartAttachmentName?: string; newPartAttachmentUrl?: string }>;
 }
 
 const TABS: ReportTab[] = [
@@ -341,6 +342,14 @@ const OEE_MOCK_DATA = [
 export function ReportsPage() {
   const [activeTab, setActiveTab] = useState<ReportTab>("MAINTENANCE REPORTS");
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+  const [prereqProgress, setPrereqProgress] = useState<Record<string, any>>(() => {
+    try {
+      const saved = localStorage.getItem("arizon_prereq_progress");
+      return saved ? JSON.parse(saved) : {};
+    } catch (_) {
+      return {};
+    }
+  });
   const [localMockReports, setLocalMockReports] = useState(() => {
     try {
       const saved = localStorage.getItem("arizon_reports");
@@ -392,6 +401,54 @@ export function ReportsPage() {
   const [perfAttachment, setPerfAttachment] = useState("");
   const [perfAttachmentUrl, setPerfAttachmentUrl] = useState("");
   const [perfScanning, setPerfScanning] = useState(false);
+
+  // Part replacement states
+  const [perfOldPartAttachment, setPerfOldPartAttachment] = useState("");
+  const [perfOldPartAttachmentUrl, setPerfOldPartAttachmentUrl] = useState("");
+  const [perfNewPartAttachment, setPerfNewPartAttachment] = useState("");
+  const [perfNewPartAttachmentUrl, setPerfNewPartAttachmentUrl] = useState("");
+  const [perfPartModalOpen, setPerfPartModalOpen] = useState(false);
+  const [perfUploadTarget, setPerfUploadTarget] = useState<string>("standard");
+  const [showPerfPrereqModal, setShowPerfPrereqModal] = useState<boolean>(false);
+  const [viewPerfPrereqOnly, setViewPerfPrereqOnly] = useState<boolean>(false);
+
+  const toggleCheck = (itemId: string) => {
+    if (!activePerfTask) return;
+    setPrereqProgress((prev) => {
+      const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+      return {
+        ...prev,
+        [activePerfTask.id]: {
+          ...taskProg,
+          checked: {
+            ...taskProg.checked,
+            [itemId]: !taskProg.checked[itemId],
+          },
+        },
+      };
+    });
+  };
+
+  const removeAttachment = (itemId: string) => {
+    if (!activePerfTask) return;
+    setPrereqProgress((prev) => {
+      const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+      const newAttachments = { ...taskProg.attachments };
+      const newAttachmentUrls = { ...taskProg.attachmentUrls };
+      delete newAttachments[itemId];
+      delete newAttachmentUrls[itemId];
+      return {
+        ...prev,
+        [activePerfTask.id]: {
+          ...taskProg,
+          attachments: newAttachments,
+          attachmentUrls: newAttachmentUrls,
+        },
+      };
+    });
+  };
+
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qrVideoRef = useRef<HTMLVideoElement>(null);
   const qrStreamRef = useRef<MediaStream | null>(null);
@@ -419,6 +476,14 @@ export function ReportsPage() {
     window.addEventListener("storage", loadSchedules);
     return () => window.removeEventListener("storage", loadSchedules);
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("arizon_prereq_progress", JSON.stringify(prereqProgress));
+    } catch (e) {
+      console.error("Failed to save prerequisite progress from Reports:", e);
+    }
+  }, [prereqProgress]);
 
   // Sync back schedule status changes to localStorage
   const updateScheduleStatus = (id: string, newStatus: ScheduleRow["status"], remarks?: string, progressData?: any) => {
@@ -637,7 +702,12 @@ export function ReportsPage() {
       setExpandedReportId(null);
     } else {
       setExpandedReportId(id);
-      setSelectedStepIdx(0);
+      const report = paginatedReports.find((r) => r.id === id);
+      if (report && report.type === "Comprehensive") {
+        setSelectedStepIdx(-1);
+      } else {
+        setSelectedStepIdx(0);
+      }
     }
   };
 
@@ -649,16 +719,29 @@ export function ReportsPage() {
     setPerfQrVerified(false);
     setPerfAttachment("");
     setPerfAttachmentUrl("");
+    setPerfOldPartAttachment("");
+    setPerfOldPartAttachmentUrl("");
+    setPerfNewPartAttachment("");
+    setPerfNewPartAttachmentUrl("");
+    if (report.type === "Comprehensive") {
+      setShowPerfPrereqModal(true);
+    } else {
+      setShowPerfPrereqModal(false);
+    }
   };
 
   const syncPerfStepToState = () => {
     if (!activePerfTask) return;
     const taskProg = activePerfTask.sopProgress || {};
-    const stepProg = taskProg[perfStepIndex] || { remarks: "", qrScanned: false, attachmentName: "", attachmentUrl: "" };
+    const stepProg = taskProg[perfStepIndex] || { remarks: "", qrScanned: false, attachmentName: "", attachmentUrl: "", oldPartAttachmentName: "", oldPartAttachmentUrl: "", newPartAttachmentName: "", newPartAttachmentUrl: "" };
     setPerfRemarks(stepProg.remarks || "");
     setPerfQrVerified(stepProg.qrScanned || false);
     setPerfAttachment(stepProg.attachmentName || "");
     setPerfAttachmentUrl(stepProg.attachmentUrl || "");
+    setPerfOldPartAttachment(stepProg.oldPartAttachmentName || "");
+    setPerfOldPartAttachmentUrl(stepProg.oldPartAttachmentUrl || "");
+    setPerfNewPartAttachment(stepProg.newPartAttachmentName || "");
+    setPerfNewPartAttachmentUrl(stepProg.newPartAttachmentUrl || "");
   };
 
   useEffect(() => {
@@ -729,8 +812,31 @@ export function ReportsPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setPerfAttachment(file.name);
-      setPerfAttachmentUrl(URL.createObjectURL(file));
+      if (perfUploadTarget.startsWith("prereq-")) {
+        const prereqId = perfUploadTarget.substring("prereq-".length);
+        if (activePerfTask) {
+          setPrereqProgress((prev) => {
+            const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+            return {
+              ...prev,
+              [activePerfTask.id]: {
+                ...taskProg,
+                attachments: { ...taskProg.attachments, [prereqId]: file.name },
+                attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: URL.createObjectURL(file) }
+              }
+            };
+          });
+        }
+      } else if (perfUploadTarget === "old") {
+        setPerfOldPartAttachment(file.name);
+        setPerfOldPartAttachmentUrl(URL.createObjectURL(file));
+      } else if (perfUploadTarget === "new") {
+        setPerfNewPartAttachment(file.name);
+        setPerfNewPartAttachmentUrl(URL.createObjectURL(file));
+      } else {
+        setPerfAttachment(file.name);
+        setPerfAttachmentUrl(URL.createObjectURL(file));
+      }
     }
   };
 
@@ -767,16 +873,85 @@ export function ReportsPage() {
         if (ctx) {
           ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
           const dataUrl = canvas.toDataURL("image/png");
-          setPerfAttachmentUrl(dataUrl);
-          setPerfAttachment(`snap-${Date.now()}.png`);
+          if (perfUploadTarget.startsWith("prereq-")) {
+            const prereqId = perfUploadTarget.substring("prereq-".length);
+            if (activePerfTask) {
+              setPrereqProgress((prev) => {
+                const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+                return {
+                  ...prev,
+                  [activePerfTask.id]: {
+                    ...taskProg,
+                    attachments: { ...taskProg.attachments, [prereqId]: `prereq-snap-${Date.now()}.png` },
+                    attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: dataUrl }
+                  }
+                };
+              });
+            }
+          } else if (perfUploadTarget === "old") {
+            setPerfOldPartAttachmentUrl(dataUrl);
+            setPerfOldPartAttachment(`old-part-snap-${Date.now()}.png`);
+          } else if (perfUploadTarget === "new") {
+            setPerfNewPartAttachmentUrl(dataUrl);
+            setPerfNewPartAttachment(`new-part-snap-${Date.now()}.png`);
+          } else {
+            setPerfAttachmentUrl(dataUrl);
+            setPerfAttachment(`snap-${Date.now()}.png`);
+          }
         }
       } catch (e) {
+        if (perfUploadTarget.startsWith("prereq-")) {
+          const prereqId = perfUploadTarget.substring("prereq-".length);
+          if (activePerfTask) {
+            setPrereqProgress((prev) => {
+              const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+              return {
+                ...prev,
+                [activePerfTask.id]: {
+                  ...taskProg,
+                  attachments: { ...taskProg.attachments, [prereqId]: `mock-prereq-snap-${Date.now()}.png` },
+                  attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: image1 }
+                }
+              };
+            });
+          }
+        } else if (perfUploadTarget === "old") {
+          setPerfOldPartAttachmentUrl(image1);
+          setPerfOldPartAttachment(`mock-old-snap-${Date.now()}.png`);
+        } else if (perfUploadTarget === "new") {
+          setPerfNewPartAttachmentUrl(image1);
+          setPerfNewPartAttachment(`mock-new-snap-${Date.now()}.png`);
+        } else {
+          setPerfAttachmentUrl(image1);
+          setPerfAttachment(`mock-snap-${Date.now()}.png`);
+        }
+      }
+    } else {
+      if (perfUploadTarget.startsWith("prereq-")) {
+        const prereqId = perfUploadTarget.substring("prereq-".length);
+        if (activePerfTask) {
+          setPrereqProgress((prev) => {
+            const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+            return {
+              ...prev,
+              [activePerfTask.id]: {
+                ...taskProg,
+                attachments: { ...taskProg.attachments, [prereqId]: `mock-prereq-snap-${Date.now()}.png` },
+                attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: image1 }
+              }
+            };
+          });
+        }
+      } else if (perfUploadTarget === "old") {
+        setPerfOldPartAttachmentUrl(image1);
+        setPerfOldPartAttachment(`mock-old-snap-${Date.now()}.png`);
+      } else if (perfUploadTarget === "new") {
+        setPerfNewPartAttachmentUrl(image1);
+        setPerfNewPartAttachment(`mock-new-snap-${Date.now()}.png`);
+      } else {
         setPerfAttachmentUrl(image1);
         setPerfAttachment(`mock-snap-${Date.now()}.png`);
       }
-    } else {
-      setPerfAttachmentUrl(image1);
-      setPerfAttachment(`mock-snap-${Date.now()}.png`);
     }
     stopCamera();
   };
@@ -793,6 +968,10 @@ export function ReportsPage() {
         qrScanned: perfQrVerified,
         attachmentName: perfAttachment,
         attachmentUrl: perfAttachmentUrl,
+        oldPartAttachmentName: perfOldPartAttachment,
+        oldPartAttachmentUrl: perfOldPartAttachmentUrl,
+        newPartAttachmentName: perfNewPartAttachment,
+        newPartAttachmentUrl: perfNewPartAttachmentUrl,
       }
     };
 
@@ -1333,6 +1512,19 @@ export function ReportsPage() {
                           {/* Left Sidebar: Step Indicators */}
                           <div className="flex flex-col gap-2 border-r border-gray-200 pr-4">
                             <span className="text-gray-400 text-[10px] font-bold uppercase tracking-wider mb-2">SOP Steps Checklist</span>
+                            {report.type === "Comprehensive" && (
+                              <button
+                                onClick={() => setSelectedStepIdx(-1)}
+                                className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-left text-xs font-semibold transition-all cursor-pointer mb-1 ${
+                                  selectedStepIdx === -1
+                                    ? "bg-[#3A5764] text-white shadow"
+                                    : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
+                                }`}
+                              >
+                                <span className="w-2.5 h-2.5 rounded-full shrink-0 bg-emerald-500" />
+                                <span className="truncate">📋 Prerequisites</span>
+                              </button>
+                            )}
                             {steps.map((st, idx) => {
                               // A step is complete if remarks are logged or status is Completed/Reviewed/Ready for Review
                               const stepRemarksLogged = report.sopProgress?.[idx]?.remarks?.trim();
@@ -1357,95 +1549,219 @@ export function ReportsPage() {
 
                           {/* Right Panel: Step Inspection Details */}
                           <div className="flex flex-col gap-4 bg-white rounded-lg border border-gray-200 p-5 shadow-inner">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <h4 className="text-gray-900 font-bold text-sm">{step.title}</h4>
-                                {step.type && (
-                                  <span className={`inline-block px-2 py-0.5 mt-1 rounded text-[9px] font-bold uppercase ${
-                                    step.type === "critical"
-                                      ? "bg-red-100 text-red-700"
-                                      : step.type === "camera"
-                                      ? "bg-blue-100 text-blue-700"
-                                      : "bg-purple-100 text-purple-755"
-                                  }`}>
-                                    {step.type} Step
-                                  </span>
-                                )}
-                              </div>
-                            </div>
+                            {selectedStepIdx === -1 ? (() => {
+                              const items = getPrereqsForSop(report.machine, report.title);
+                              const taskProg = prereqProgress[report.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
 
-                            {step.desc && (
-                              <div className="text-gray-650 bg-gray-50 rounded p-3 text-xs leading-relaxed border border-gray-100">
-                                <strong>Instruction:</strong> {step.desc}
-                              </div>
-                            )}
-
-                            {/* Media & Done details */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                              
-                              {/* Step Media */}
-                              <div className="relative aspect-[4/3] w-full rounded overflow-hidden bg-black flex items-center justify-center border border-gray-200">
-                                <img src={step.mediaUrl} className="object-cover w-full h-full opacity-90" alt="Instruction media" />
-                              </div>
-
-                              {/* Performed verification details */}
-                              <div className="flex flex-col gap-3 justify-between">
-                                <div className="flex flex-col gap-3">
-                                  {/* QR Code Verification */}
-                                  <div>
-                                    <span className="text-[11px] font-bold uppercase text-gray-400 block mb-1">QR Verification Tag</span>
-                                    {report.sopProgress?.[selectedStepIdx]?.qrScanned || report.status === "Reviewed" || report.status === "Ready for Review" ? (
-                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-xs font-semibold">
-                                        <Check size={12} /> {report.machine}-Verified Tag Match
+                              return (
+                                <div className="flex flex-col gap-4">
+                                  <div className="border-b border-gray-100 pb-3 flex justify-between items-center">
+                                    <div>
+                                      <h4 className="text-gray-900 font-bold text-sm">
+                                        AMC Prerequisites & Consumables Check-in Details
+                                      </h4>
+                                      <span className="text-xs text-gray-500 mt-1 block">
+                                        Verified compliance checklists before performing SOP.
                                       </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-500 border border-gray-200 rounded text-xs">
-                                        Pending / Not Scanned
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Photo Attachment Proof */}
-                                  <div>
-                                    <span className="text-[11px] font-bold uppercase text-gray-400 block mb-1">Attached Photo Proof</span>
-                                    {report.sopProgress?.[selectedStepIdx]?.attachmentName ? (
-                                      <div className="flex items-center gap-2 text-xs font-medium text-blue-650 bg-blue-50 border border-blue-100 rounded p-1.5">
-                                        <img src={report.sopProgress[selectedStepIdx].attachmentUrl || image1} className="w-8 h-8 object-cover rounded border border-blue-200 shrink-0" alt="Thumbnail" />
-                                        <span className="truncate">{report.sopProgress[selectedStepIdx].attachmentName}</span>
-                                      </div>
-                                    ) : (
-                                      <span className="text-xs text-gray-400 italic">No attachment required/uploaded</span>
-                                    )}
-                                  </div>
-
-                                  {/* Remarks */}
-                                  <div>
-                                    <span className="text-[11px] font-bold uppercase text-gray-400 block mb-1">Step Remarks</span>
-                                    <div className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs text-gray-700 italic min-h-[50px]">
-                                      {report.sopProgress?.[selectedStepIdx]?.remarks || "No remarks entered for this step."}
                                     </div>
+                                    <span className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-50 text-emerald-700 border border-emerald-150">
+                                      Compliance Verified
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                                    {items.map((item) => {
+                                      const isChecked = !!taskProg.checked[item.id];
+                                      const attachmentName = taskProg.attachments[item.id];
+                                      const attachmentUrl = taskProg.attachmentUrls[item.id];
+
+                                      return (
+                                        <div key={item.id} className="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col gap-2.5 shadow-sm">
+                                          <div className="flex justify-between items-center">
+                                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                              item.category === "Tooling" ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                                              item.category === "Consumables" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                                              item.category === "Safety" ? "bg-red-50 text-red-700 border border-red-200" :
+                                              "bg-purple-50 text-purple-700 border border-purple-200"
+                                            }`}>
+                                              {item.category}
+                                            </span>
+                                            <span className="text-[10px] text-gray-400 font-mono">ID: {item.tag}</span>
+                                          </div>
+                                          
+                                          <div>
+                                            <h5 className="text-gray-800 font-bold text-xs">{item.name}</h5>
+                                            <p className="text-gray-505 text-[11px] mt-0.5 leading-relaxed">{item.description}</p>
+                                          </div>
+
+                                          <div className="mt-2 pt-2 border-t border-gray-150 flex items-center justify-between">
+                                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50/50 border border-emerald-100 rounded px-2 py-0.5">
+                                              <Check size={11} /> Verified Ready
+                                            </span>
+
+                                            {attachmentName ? (
+                                              <div 
+                                                className="flex items-center gap-1.5 text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 rounded px-2 py-1 cursor-pointer hover:bg-blue-100 transition-colors shrink-0 max-w-[150px]"
+                                                onClick={() => {
+                                                  if (attachmentUrl) setEnlargedImage(attachmentUrl);
+                                                }}
+                                              >
+                                                {attachmentUrl ? (
+                                                  <img src={attachmentUrl} className="w-5 h-5 object-cover rounded border border-blue-200 shrink-0" alt="Prereq" />
+                                                ) : (
+                                                  <FileText size={10} className="text-blue-500 shrink-0" />
+                                                )}
+                                                <span className="truncate">{attachmentName}</span>
+                                              </div>
+                                            ) : (
+                                              <span className="text-[10px] text-gray-400 italic">No photo evidence</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
+                              );
+                            })() : (
+                              <>
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <h4 className="text-gray-900 font-bold text-sm">{step.title}</h4>
+                                    {step.type && (
+                                      <span className={`inline-block px-2 py-0.5 mt-1 rounded text-[9px] font-bold uppercase ${
+                                        step.type === "critical"
+                                          ? "bg-red-100 text-red-700"
+                                          : step.type === "camera"
+                                          ? "bg-blue-100 text-blue-700"
+                                          : step.type === "info"
+                                          ? "bg-purple-100 text-purple-700"
+                                          : "bg-gray-200 text-gray-750"
+                                      }`}>
+                                        {step.type}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-gray-500">
+                                    Tolerance: <span className="font-semibold text-gray-800">{step.tolerance || "N/A"}</span>
+                                  </span>
+                                </div>
 
-                                {report.status === "Ready for Review" && (
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => handleRejectReport(report.id)}
-                                      className="flex-1 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-500 rounded text-xs font-bold transition-all"
-                                    >
-                                      Reject
-                                    </button>
-                                    <button
-                                      onClick={() => handleApproveReport(report.id)}
-                                      className="flex-1 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-bold transition-all"
-                                    >
-                                      Approve
-                                    </button>
+                                {step.desc && (
+                                  <div className="text-gray-650 bg-gray-50 rounded p-3 text-xs leading-relaxed border border-gray-100">
+                                    <strong>Instruction:</strong> {step.desc}
                                   </div>
                                 )}
-                              </div>
 
-                            </div>
+                                {/* Media & Done details */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                                  
+                                  {/* Step Media */}
+                                  <div className="relative aspect-[4/3] w-full rounded overflow-hidden bg-black flex items-center justify-center border border-gray-200">
+                                    <img src={step.mediaUrl} className="object-cover w-full h-full opacity-90" alt="Instruction media" />
+                                  </div>
+
+                                  {/* Performed verification details */}
+                                  <div className="flex flex-col gap-3 justify-between">
+                                    <div className="flex flex-col gap-3">
+                                      {/* QR Code Verification */}
+                                      <div>
+                                        <span className="text-[11px] font-bold uppercase text-gray-400 block mb-1">QR Verification Tag</span>
+                                        {report.sopProgress?.[selectedStepIdx]?.qrScanned || report.status === "Reviewed" || report.status === "Ready for Review" ? (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-xs font-semibold">
+                                            <Check size={12} /> {report.machine}-Verified Tag Match
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-500 border border-gray-200 rounded text-xs">
+                                            Pending / Not Scanned
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* Photo Attachment Proof */}
+                                      <div>
+                                        <span className="text-[11px] font-bold uppercase text-gray-400 block mb-1">
+                                          {step?.isPartChange ? "Part Replacement Evidence" : "Attached Photo Proof"}
+                                        </span>
+                                        {step?.isPartChange ? (
+                                          <div className="flex flex-col gap-2">
+                                            {report.sopProgress?.[selectedStepIdx]?.oldPartAttachmentName ? (
+                                              <div 
+                                                className="flex items-center gap-2 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-100 rounded p-1.5 cursor-pointer hover:bg-amber-100 transition-colors"
+                                                onClick={() => {
+                                                  if (report.sopProgress?.[selectedStepIdx]?.oldPartAttachmentUrl) {
+                                                    setEnlargedImage(report.sopProgress[selectedStepIdx].oldPartAttachmentUrl);
+                                                  }
+                                                }}
+                                              >
+                                                <img src={report.sopProgress[selectedStepIdx].oldPartAttachmentUrl || image1} className="w-8 h-8 object-cover rounded border border-amber-200 shrink-0" alt="Old Part" />
+                                                <span className="truncate"><strong>Old Part:</strong> {report.sopProgress[selectedStepIdx].oldPartAttachmentName}</span>
+                                              </div>
+                                            ) : (
+                                              <span className="text-xs text-gray-400 italic">No old part evidence uploaded</span>
+                                            )}
+                                            {report.sopProgress?.[selectedStepIdx]?.newPartAttachmentName ? (
+                                              <div 
+                                                className="flex items-center gap-2 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-100 rounded p-1.5 cursor-pointer hover:bg-emerald-100 transition-colors"
+                                                onClick={() => {
+                                                  if (report.sopProgress?.[selectedStepIdx]?.newPartAttachmentUrl) {
+                                                    setEnlargedImage(report.sopProgress[selectedStepIdx].newPartAttachmentUrl);
+                                                  }
+                                                }}
+                                              >
+                                                <img src={report.sopProgress[selectedStepIdx].newPartAttachmentUrl || image1} className="w-8 h-8 object-cover rounded border border-emerald-200 shrink-0" alt="New Part" />
+                                                <span className="truncate"><strong>New Part:</strong> {report.sopProgress[selectedStepIdx].newPartAttachmentName}</span>
+                                              </div>
+                                            ) : (
+                                              <span className="text-xs text-gray-400 italic">No new part evidence uploaded</span>
+                                            )}
+                                          </div>
+                                        ) : report.sopProgress?.[selectedStepIdx]?.attachmentName ? (
+                                          <div 
+                                            className="flex items-center gap-2 text-xs font-medium text-blue-650 bg-blue-50 border border-blue-100 rounded p-1.5 cursor-pointer hover:bg-blue-100 transition-colors"
+                                            onClick={() => {
+                                              if (report.sopProgress?.[selectedStepIdx]?.attachmentUrl) {
+                                                setEnlargedImage(report.sopProgress[selectedStepIdx].attachmentUrl);
+                                              }
+                                            }}
+                                          >
+                                            <img src={report.sopProgress[selectedStepIdx].attachmentUrl || image1} className="w-8 h-8 object-cover rounded border border-blue-200 shrink-0" alt="Thumbnail" />
+                                            <span className="truncate">{report.sopProgress[selectedStepIdx].attachmentName}</span>
+                                          </div>
+                                        ) : (
+                                          <span className="text-xs text-gray-400 italic">No attachment required/uploaded</span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Remarks */}
+                                    <div>
+                                      <span className="text-[11px] font-bold uppercase text-gray-400 block mb-1">Step Remarks</span>
+                                      <div className="w-full bg-gray-50 border border-gray-200 rounded p-2 text-xs text-gray-700 italic min-h-[50px]">
+                                        {report.sopProgress?.[selectedStepIdx]?.remarks || "No remarks entered for this step."}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {report.status === "Ready for Review" && (
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => handleRejectReport(report.id)}
+                                        className="flex-1 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-500 rounded text-xs font-bold transition-all"
+                                      >
+                                        Reject
+                                      </button>
+                                      <button
+                                        onClick={() => handleApproveReport(report.id)}
+                                        className="flex-1 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-bold transition-all"
+                                      >
+                                        Approve
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </>
+                            )}
                           </div>
 
                         </div>
@@ -1695,15 +2011,223 @@ export function ReportsPage() {
         className="hidden"
       />
 
+      {/* Prerequisites Modal for Reports Direct Performance Wizard */}
+      {activePerfTask && ((showPerfPrereqModal && activePerfTask.status === "In Progress") || viewPerfPrereqOnly) && (() => {
+        const items = getPrereqsForSop(activePerfTask.machine, activePerfTask.title);
+        const taskProg = prereqProgress[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+        const isPrereqReadOnly = viewPerfPrereqOnly || activePerfTask.status !== "In Progress";
+        const allChecked = items.every(item => !item.required || taskProg.checked[item.id]);
+
+        return (
+          <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+            <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 my-8">
+              {/* Header */}
+              <div className="px-8 py-5 bg-gradient-to-r from-[#3A5764] to-[#2f4a55] text-white flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold tracking-wide">
+                    {isPrereqReadOnly ? "Comprehensive AMC Prerequisites (Read-Only)" : "Comprehensive AMC Prerequisites"}
+                  </h2>
+                  <p className="text-xs text-gray-200 mt-1">
+                    Verify required tools, safety equipment, consumables, and calibrations for <span className="font-semibold underline">{activePerfTask.machine}</span>.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (viewPerfPrereqOnly) {
+                      setViewPerfPrereqOnly(false);
+                    } else {
+                      setActivePerfTask(null);
+                      setShowPerfPrereqModal(false);
+                    }
+                  }}
+                  className="text-gray-200 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-8 bg-gray-50/50 flex-1 overflow-y-auto max-h-[60vh] [scrollbar-width:thin] [scrollbar-color:#3A5764_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#3A5764]/60 [&::-webkit-scrollbar-thumb]:rounded-full">
+                <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 text-amber-800 text-sm">
+                  <div className="shrink-0 mt-0.5">
+                    <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <span className="font-bold">Compliance Directive:</span> All items below must be physically verified at the station. Uploading photos of the ID tags or calibration stickers is recommended.
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-left">
+                  {items.map((item) => {
+                    const isChecked = !!taskProg.checked[item.id];
+                    const attachmentName = taskProg.attachments[item.id];
+                    const attachmentUrl = taskProg.attachmentUrls[item.id];
+
+                    return (
+                      <div key={item.id} className={`border rounded-xl p-5 flex flex-col bg-white transition-all shadow-sm ${isChecked ? 'border-emerald-300 ring-1 ring-emerald-300/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                        {/* Top Metadata */}
+                        <div className="flex items-center justify-between mb-2.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            item.category === "Tooling" ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                            item.category === "Consumables" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                            item.category === "Safety" ? "bg-red-50 text-red-700 border border-red-200" :
+                            "bg-purple-50 text-purple-700 border border-purple-200"
+                          }`}>
+                            {item.category}
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-mono font-semibold">ID: {item.tag}</span>
+                        </div>
+
+                        {/* Title and description */}
+                        <h3 className="text-gray-900 font-bold text-sm leading-snug">{item.name}</h3>
+                        <p className="text-gray-500 text-xs mt-1 leading-relaxed flex-1">{item.description}</p>
+
+                        {/* Checkbox and Upload Row */}
+                        <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col gap-3">
+                          {/* Checkbox */}
+                          <label className={`flex items-center gap-2.5 select-none ${isPrereqReadOnly ? 'cursor-default' : 'cursor-pointer'}`}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              disabled={isPrereqReadOnly}
+                              onChange={() => {
+                                if (isPrereqReadOnly) return;
+                                toggleCheck(item.id);
+                              }}
+                              className="w-4.5 h-4.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            />
+                            <span className="text-xs text-gray-700 font-semibold">Verify Item Present & Ready</span>
+                          </label>
+
+                          {/* Evidence upload */}
+                          <div className="flex flex-col gap-2">
+                            {attachmentName ? (
+                              <div className="flex items-center justify-between bg-blue-50/50 border border-blue-200 rounded-lg p-2">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                  {attachmentUrl ? (
+                                    <img
+                                      src={attachmentUrl}
+                                      className="w-8 h-8 rounded object-cover border border-blue-200 cursor-pointer"
+                                      alt="Thumbnail"
+                                      onClick={() => setEnlargedImage(attachmentUrl)}
+                                    />
+                                  ) : (
+                                    <FileText size={14} className="text-blue-500 shrink-0" />
+                                  )}
+                                  <span className="text-[11px] text-blue-700 font-medium truncate max-w-[130px]" title={attachmentName}>
+                                    {attachmentName}
+                                  </span>
+                                </div>
+                                {!isPrereqReadOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAttachment(item.id)}
+                                    className="text-red-500 hover:text-red-700 text-[10px] font-bold shrink-0 ml-1.5 cursor-pointer"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              !isPrereqReadOnly ? (
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPerfUploadTarget("prereq-" + item.id);
+                                      startCamera();
+                                    }}
+                                    className="flex-1 flex items-center justify-center gap-1 bg-[#3A5764] hover:bg-[#2f4a55] text-white px-2.5 py-1.5 rounded text-[11px] font-semibold transition-colors cursor-pointer"
+                                  >
+                                    <Camera size={12} /> Capture
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPerfUploadTarget("prereq-" + item.id);
+                                      fileInputRef.current?.click();
+                                    }}
+                                    className="flex-1 flex items-center justify-center gap-1 border border-gray-300 hover:bg-gray-50 text-gray-705 px-2.5 py-1.5 rounded text-[11px] font-semibold bg-white transition-colors cursor-pointer"
+                                  >
+                                    <Upload size={12} /> Upload
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-400 italic">No evidence uploaded</span>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-8 py-5 bg-gray-50 border-t border-gray-150 flex items-center justify-between">
+                {isPrereqReadOnly ? (
+                  <>
+                    <div />
+                    <button
+                      type="button"
+                      onClick={() => setViewPerfPrereqOnly(false)}
+                      className="px-6 py-2.5 bg-[#3A5764] hover:bg-[#2f4a55] text-white rounded-md font-medium text-xs tracking-wider transition-colors uppercase cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActivePerfTask(null);
+                        setShowPerfPrereqModal(false);
+                      }}
+                      className="px-5 py-2.5 border border-gray-300 hover:bg-gray-100 text-gray-700 rounded-md font-medium text-xs tracking-wider transition-colors uppercase cursor-pointer"
+                    >
+                      Cancel & Exit
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!allChecked}
+                      onClick={() => {
+                        setPrereqProgress((prev) => {
+                          const taskProg = prev[activePerfTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+                          return {
+                            ...prev,
+                            [activePerfTask.id]: {
+                              ...taskProg,
+                              completed: true,
+                            },
+                          };
+                        });
+                        setShowPerfPrereqModal(false);
+                      }}
+                      className="px-6 py-2.5 bg-[#3A5764] hover:bg-[#2f4a55] text-white disabled:opacity-50 disabled:cursor-not-allowed rounded-md font-medium text-xs tracking-wider transition-colors uppercase cursor-pointer shadow-sm"
+                    >
+                      Proceed to SOP Execution
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Bottom-Up Direct SOP Performance Wizard Modal */}
-      {activePerfTask && (() => {
+      {activePerfTask && !showPerfPrereqModal && !viewPerfPrereqOnly && (() => {
         const steps = activePerfTask.steps || defaultSopSteps;
         const step = steps[perfStepIndex] || steps[0];
         const isLastStep = perfStepIndex === steps.length - 1;
         const isReadOnly = activePerfTask.status !== "In Progress";
 
         // Perform step validation checks
-        const validation = validateStep(step, perfRemarks, perfQrVerified, perfAttachment);
+        const validation = validateStep(step, perfRemarks, perfQrVerified, perfAttachment, perfOldPartAttachment, perfNewPartAttachment);
         const isStepValid = validation.isValid;
         const validationError = validation.error;
 
@@ -1727,6 +2251,15 @@ export function ReportsPage() {
                     ( {activePerfTask.doneBy || "operator"} )
                   </span>
                 </h3>
+                {activePerfTask.type === "Comprehensive" && (
+                  <button
+                    type="button"
+                    onClick={() => setViewPerfPrereqOnly(true)}
+                    className="ml-auto mr-4 px-3 py-1.5 border border-gray-300 hover:border-[#3A5764] hover:text-[#3A5764] text-gray-700 rounded text-xs font-semibold bg-white transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <FileText size={14} /> View Prerequisites
+                  </button>
+                )}
                 <span
                   className={
                     "text-base font-semibold " +
@@ -1943,7 +2476,7 @@ export function ReportsPage() {
                           Attachments
                         </span>
                         <div className="flex gap-3">
-                          {step.type === "camera" && (
+                          {(step.type === "camera" || step.isPartChange || !!step.refImageUrl) && (
                             <button
                               type="button"
                               disabled={!step.refImageUrl}
@@ -1963,7 +2496,10 @@ export function ReportsPage() {
                           )}
                           <button
                             disabled={isReadOnly}
-                            onClick={startCamera}
+                            onClick={() => {
+                              setPerfUploadTarget("standard");
+                              startCamera();
+                            }}
                             className="text-[#10B981] hover:text-emerald-700 disabled:opacity-50 transition-colors"
                             title="Capture Photo"
                           >
@@ -1971,12 +2507,28 @@ export function ReportsPage() {
                           </button>
                           <button
                             disabled={isReadOnly}
-                            onClick={() => fileInputRef.current?.click()}
+                            onClick={() => {
+                              setPerfUploadTarget("standard");
+                              fileInputRef.current?.click();
+                            }}
                             className="text-[#10B981] hover:text-emerald-700 disabled:opacity-50 transition-colors"
                             title="Upload File"
                           >
                             <Upload size={22} />
                           </button>
+                          {step.isPartChange && (
+                            <button
+                              type="button"
+                              onClick={() => setPerfPartModalOpen(true)}
+                              className="text-[#3A5764] hover:text-[#2f4a55] transition-colors relative"
+                              title="Part Replacement Evidence"
+                            >
+                              <RefreshCw size={22} className={perfOldPartAttachment && perfNewPartAttachment ? "text-emerald-600" : "text-[#3A5764]"} />
+                              {(perfOldPartAttachment || perfNewPartAttachment) && (
+                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white animate-pulse" />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
  
@@ -2002,9 +2554,66 @@ export function ReportsPage() {
                             </button>
                           )}
                         </div>
-                      ) : (
+                      ) : !step.isPartChange ? (
                         <div className="text-sm text-gray-500 font-normal">
                           No attachments available.
+                        </div>
+                      ) : null}
+
+                      {step.isPartChange && (perfOldPartAttachment || perfNewPartAttachment) && (
+                        <div className="flex flex-col gap-1.5 mt-1.5 border-t border-gray-150 pt-1.5">
+                          {perfOldPartAttachment && (
+                            <div className="text-blue-600 font-medium text-xs flex items-center justify-between bg-amber-50/50 border border-amber-200 p-2 rounded-md">
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                {perfOldPartAttachmentUrl ? (
+                                  <img src={perfOldPartAttachmentUrl} className="w-7 h-7 rounded object-cover border border-amber-200 shrink-0" alt="old part" />
+                                ) : (
+                                  <FileText size={12} className="text-amber-500 shrink-0" />
+                                )}
+                                <span className="truncate max-w-[200px] text-amber-800 ml-1 font-semibold">Old Part: {perfOldPartAttachment}</span>
+                              </div>
+                              {!isReadOnly && (
+                                <button
+                                  onClick={() => {
+                                    setPerfOldPartAttachment("");
+                                    setPerfOldPartAttachmentUrl("");
+                                  }}
+                                  className="text-red-500 hover:text-red-700 text-[10px] font-bold ml-2 shrink-0"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {perfNewPartAttachment && (
+                            <div className="text-blue-600 font-medium text-xs flex items-center justify-between bg-emerald-50/50 border border-emerald-200 p-2 rounded-md">
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                {perfNewPartAttachmentUrl ? (
+                                  <img src={perfNewPartAttachmentUrl} className="w-7 h-7 rounded object-cover border border-emerald-200 shrink-0" alt="new part" />
+                                ) : (
+                                  <FileText size={12} className="text-emerald-500 shrink-0" />
+                                )}
+                                <span className="truncate max-w-[200px] text-emerald-800 ml-1 font-semibold">New Part: {perfNewPartAttachment}</span>
+                              </div>
+                              {!isReadOnly && (
+                                <button
+                                  onClick={() => {
+                                    setPerfNewPartAttachment("");
+                                    setPerfNewPartAttachmentUrl("");
+                                  }}
+                                  className="text-red-500 hover:text-red-700 text-[10px] font-bold ml-2 shrink-0"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {step.isPartChange && !perfOldPartAttachment && !perfNewPartAttachment && (
+                        <div className="text-sm text-gray-500 font-normal">
+                          No part evidence uploaded. Click the replacement icon to upload.
                         </div>
                       )}
                     </div>
@@ -2107,7 +2716,187 @@ export function ReportsPage() {
             </div>
           </div>
 
-          {/* Lightbox Dialog Enlarger Overlay */}
+          {/* Part Replacement Evidence Modal */}
+          {perfPartModalOpen && (
+            <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4 animate-in fade-in duration-150">
+              <div className="bg-white rounded-2xl overflow-hidden w-full max-w-2xl shadow-2xl flex flex-col animate-in zoom-in-95 duration-200">
+                {/* Modal Header */}
+                <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between text-left">
+                  <div>
+                    <span className="text-gray-900 font-semibold text-lg block">Part Replacement Evidence</span>
+                    <span className="text-gray-500 text-xs mt-0.5">Please provide photos or files for both the old and new parts.</span>
+                  </div>
+                  <button onClick={() => setPerfPartModalOpen(false)} className="text-gray-500 hover:text-gray-800 p-1.5 rounded-full hover:bg-gray-100 transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Modal Body */}
+                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 bg-white text-left">
+                  {/* Old Part Card */}
+                  <div className="border border-gray-200 rounded-xl p-4 flex flex-col gap-3 bg-gray-50/50">
+                    <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                      <span className="text-gray-800 font-bold text-sm uppercase tracking-wide">1. Old Part (Removed)</span>
+                      {perfOldPartAttachment && (
+                        <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded font-semibold">Ready</span>
+                      )}
+                    </div>
+
+                    {perfOldPartAttachment ? (
+                      <div className="flex flex-col items-center gap-2 py-2 flex-1 justify-center">
+                        {perfOldPartAttachmentUrl ? (
+                          <img src={perfOldPartAttachmentUrl} className="w-24 h-24 rounded-lg object-cover border border-gray-200 shadow-sm" alt="Old Part" />
+                        ) : (
+                          <FileText size={40} className="text-gray-400" />
+                        )}
+                        <span className="text-xs text-gray-700 font-medium truncate max-w-full px-2" title={perfOldPartAttachment}>
+                          {perfOldPartAttachment}
+                        </span>
+                        <div className="flex gap-2 w-full mt-1">
+                          {perfOldPartAttachmentUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setEnlargedImage(perfOldPartAttachmentUrl)}
+                              className="flex-1 py-1 px-2 text-xs border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded font-medium"
+                            >
+                              View
+                            </button>
+                          )}
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPerfOldPartAttachment("");
+                                setPerfOldPartAttachmentUrl("");
+                              }}
+                              className="flex-1 py-1 px-2 text-xs border border-red-200 text-red-500 bg-white hover:bg-red-50 rounded font-medium"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5 items-center justify-center py-6 flex-1 text-center border-2 border-dashed border-gray-200 rounded-lg bg-white">
+                        <span className="text-xs text-gray-400 font-normal px-4">No evidence uploaded yet</span>
+                        {!isReadOnly && (
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPerfUploadTarget("old");
+                                startCamera();
+                              }}
+                              className="flex items-center gap-1 bg-[#3A5764] hover:bg-[#2f4a55] text-white px-3 py-1.5 rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                            >
+                              <Camera size={14} /> Capture
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPerfUploadTarget("old");
+                                fileInputRef.current?.click();
+                              }}
+                              className="flex items-center gap-1 border border-gray-300 hover:bg-gray-50 text-gray-750 px-3 py-1.5 rounded text-xs font-semibold bg-white transition-colors cursor-pointer"
+                            >
+                              <Upload size={14} /> Upload
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* New Part Card */}
+                  <div className="border border-gray-200 rounded-xl p-4 flex flex-col gap-3 bg-gray-50/50">
+                    <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                      <span className="text-gray-800 font-bold text-sm uppercase tracking-wide">2. New Part (Installed)</span>
+                      {perfNewPartAttachment && (
+                        <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded font-semibold">Ready</span>
+                      )}
+                    </div>
+
+                    {perfNewPartAttachment ? (
+                      <div className="flex flex-col items-center gap-2 py-2 flex-1 justify-center">
+                        {perfNewPartAttachmentUrl ? (
+                          <img src={perfNewPartAttachmentUrl} className="w-24 h-24 rounded-lg object-cover border border-gray-200 shadow-sm" alt="New Part" />
+                        ) : (
+                          <FileText size={40} className="text-gray-400" />
+                        )}
+                        <span className="text-xs text-gray-700 font-medium truncate max-w-full px-2" title={perfNewPartAttachment}>
+                          {perfNewPartAttachment}
+                        </span>
+                        <div className="flex gap-2 w-full mt-1">
+                          {perfNewPartAttachmentUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setEnlargedImage(perfNewPartAttachmentUrl)}
+                              className="flex-1 py-1 px-2 text-xs border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded font-medium"
+                            >
+                              View
+                            </button>
+                          )}
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPerfNewPartAttachment("");
+                                setPerfNewPartAttachmentUrl("");
+                              }}
+                              className="flex-1 py-1 px-2 text-xs border border-red-200 text-red-500 bg-white hover:bg-red-50 rounded font-medium"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5 items-center justify-center py-6 flex-1 text-center border-2 border-dashed border-gray-200 rounded-lg bg-white">
+                        <span className="text-xs text-gray-400 font-normal px-4">No evidence uploaded yet</span>
+                        {!isReadOnly && (
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPerfUploadTarget("new");
+                                startCamera();
+                              }}
+                              className="flex items-center gap-1 bg-[#3A5764] hover:bg-[#2f4a55] text-white px-3 py-1.5 rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                            >
+                              <Camera size={14} /> Capture
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPerfUploadTarget("new");
+                                fileInputRef.current?.click();
+                              }}
+                              className="flex items-center gap-1 border border-gray-300 hover:bg-gray-50 text-gray-750 px-3 py-1.5 rounded text-xs font-semibold bg-white transition-colors cursor-pointer"
+                            >
+                              <Upload size={14} /> Upload
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Modal Footer */}
+                <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setPerfPartModalOpen(false)}
+                    className="px-6 py-2 bg-[#3A5764] hover:bg-[#2f4a55] text-white rounded font-medium text-xs tracking-wider transition-colors shadow-sm cursor-pointer"
+                  >
+                    CONFIRM & CLOSE
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+      {/* Lightbox Dialog Enlarger Overlay */}
           {enlargedImage && (
             <div 
               className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 cursor-zoom-out animate-in fade-in duration-150"
@@ -2126,57 +2915,57 @@ export function ReportsPage() {
               />
             </div>
           )}
-
-          {/* Webcam Device Capture Dialog Modal */}
-          {webcamModalOpen && (
-            <div className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150">
-              <div className="bg-white rounded-xl overflow-hidden w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in-95 duration-200">
-                <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                  <span className="text-gray-900 font-semibold">Camera Capture</span>
-                  <button onClick={stopCamera} className="text-gray-500 hover:text-gray-800">
-                    <X size={20} />
-                  </button>
-                </div>
-                
-                <div className="p-6 flex flex-col items-center justify-center bg-gray-950 min-h-[300px] relative">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-auto rounded bg-black max-h-[360px] object-cover"
-                  />
-                  {/* Overlay guides */}
-                  <div className="absolute inset-8 border border-white/20 pointer-events-none rounded flex items-center justify-center">
-                    <div className="w-12 h-12 border-t-2 border-l-2 border-white/40 absolute top-0 left-0"></div>
-                    <div className="w-12 h-12 border-t-2 border-r-2 border-white/40 absolute top-0 right-0"></div>
-                    <div className="w-12 h-12 border-b-2 border-l-2 border-white/40 absolute bottom-0 left-0"></div>
-                    <div className="w-12 h-12 border-b-2 border-r-2 border-white/40 absolute bottom-0 right-0"></div>
-                    <span className="text-white/40 text-xs text-center font-medium px-4">Center workpiece in viewfinder</span>
-                  </div>
-                </div>
-
-                <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={stopCamera}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-md text-xs font-semibold"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={capturePhoto}
-                    className="px-6 py-2 bg-[#3A5764] hover:bg-[#2f4a55] text-white rounded-md text-xs font-bold shadow transition-colors"
-                  >
-                    Capture Photo
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
           </>
         );
       })()}
+
+      {/* Webcam Device Capture Dialog Modal — top-level so it renders from ANY modal (Prerequisites or SOP perform wizard) */}
+      {webcamModalOpen && (
+        <div className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl overflow-hidden w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+              <span className="text-gray-900 font-semibold">Camera Capture</span>
+              <button onClick={stopCamera} className="text-gray-500 hover:text-gray-800">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 flex flex-col items-center justify-center bg-gray-950 min-h-[300px] relative">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="w-full h-auto rounded bg-black max-h-[360px] object-cover"
+              />
+              {/* Overlay guides */}
+              <div className="absolute inset-8 border border-white/20 pointer-events-none rounded flex items-center justify-center">
+                <div className="w-12 h-12 border-t-2 border-l-2 border-white/40 absolute top-0 left-0"></div>
+                <div className="w-12 h-12 border-t-2 border-r-2 border-white/40 absolute top-0 right-0"></div>
+                <div className="w-12 h-12 border-b-2 border-l-2 border-white/40 absolute bottom-0 left-0"></div>
+                <div className="w-12 h-12 border-b-2 border-r-2 border-white/40 absolute bottom-0 right-0"></div>
+                <span className="text-white/40 text-xs text-center font-medium px-4"></span>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={stopCamera}
+                className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-md text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={capturePhoto}
+                className="px-6 py-2 bg-[#3A5764] hover:bg-[#2f4a55] text-white rounded-md text-xs font-bold shadow transition-colors"
+              >
+                Capture Photo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

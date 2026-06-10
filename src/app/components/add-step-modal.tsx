@@ -21,6 +21,7 @@ export type NewStep = {
   qrCodes: string[];
   hashtags: string[];
   refImageUrl?: string;
+  isPartChange?: boolean;
 };
 
 type Props = {
@@ -89,6 +90,7 @@ export function AddStepModal({ onClose, onSubmit }: Props) {
     qrCodes: [],
     hashtags: [],
     refImageUrl: "",
+    isPartChange: false,
   });
 
   const [sensorSelect, setSensorSelect] = useState("");
@@ -166,6 +168,7 @@ export function AddStepModal({ onClose, onSubmit }: Props) {
       qrCodes: form.qrCodes,
       hashtags: form.hashtags,
       refImageUrl: form.type === "camera" ? form.refImageUrl : undefined,
+      isPartChange: form.isPartChange || false,
     };
 
     if (form.kind === "text") {
@@ -188,7 +191,7 @@ export function AddStepModal({ onClose, onSubmit }: Props) {
         <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100 bg-gray-50">
           <div>
             <h2 className="text-gray-900" style={{ fontSize: "20px", fontWeight: 600 }}>
-              Add Verification Step
+              Add Step
             </h2>
             <p className="text-gray-500" style={{ fontSize: "12px" }}>
               Define step parameters, media, and integration requirements.
@@ -251,6 +254,23 @@ export function AddStepModal({ onClose, onSubmit }: Props) {
                 <option value="critical">critical</option>
               </select>
             </Field>
+          </div>
+
+          {/* Part Change Checkbox */}
+          <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <input
+              type="checkbox"
+              id="isPartChange"
+              checked={form.isPartChange || false}
+              onChange={(e) => set("isPartChange", e.target.checked)}
+              className="w-4.5 h-4.5 rounded border-gray-300 text-[#3A5764] focus:ring-[#3A5764] cursor-pointer"
+            />
+            <label htmlFor="isPartChange" className="text-gray-800 font-semibold text-sm cursor-pointer select-none">
+              This step involves a part change / replacement
+              <span className="block text-gray-500 font-normal text-xs mt-0.5">
+                Enables uploading of dual evidence (one photo for the old part, one for the new part).
+              </span>
+            </label>
           </div>
 
           {/* Row 3: Description & Answer */}

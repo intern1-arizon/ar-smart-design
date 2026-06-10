@@ -47,10 +47,10 @@ const TABS: Tab[] = [
 ];
 
 export type Step =
-  | { kind: "video"; title: string; subtitle: string; src: string }
-  | { kind: "image"; title: string; subtitle: string; src: string; alt: string }
-  | { kind: "text"; title: string; subtitle: string; body: string }
-  | { kind: "audio"; title: string; subtitle: string; src: string };
+  | { kind: "video"; title: string; subtitle: string; src: string; isPartChange?: boolean; refImageUrl?: string; type?: "info" | "camera" | "critical" | "normal" }
+  | { kind: "image"; title: string; subtitle: string; src: string; alt: string; isPartChange?: boolean; refImageUrl?: string; type?: "info" | "camera" | "critical" | "normal" }
+  | { kind: "text"; title: string; subtitle: string; body: string; isPartChange?: boolean; refImageUrl?: string; type?: "info" | "camera" | "critical" | "normal" }
+  | { kind: "audio"; title: string; subtitle: string; src: string; isPartChange?: boolean; refImageUrl?: string; type?: "info" | "camera" | "critical" | "normal" };
 
 type MaintenanceRow = {
   title: string;
@@ -500,6 +500,9 @@ type AmcRow = {
   steps: Step[];
 };
 
+// Increment this when rmgAmcRowsSeed steps are structurally changed — triggers cache refresh.
+const RMG_AMC_SEED_VERSION = 5; // v5: added type: "camera" to step 4 and step 9
+
 const rmgAmcRowsSeed: AmcRow[] = [
   {
     title: "RMG Annual Maintenance Service",
@@ -537,59 +540,71 @@ const rmgAmcRowsSeed: AmcRow[] = [
       },
       {
         kind: "image",
-        title: "4. Logging :",
+        title: "4. Seal & O-Ring Replacement :",
+        subtitle: "Replace Impeller O-Ring and Chopper Seal Kit",
+        src: rmg3,
+        alt: "RMG Step 4 Part Replacement",
+        isPartChange: true,
+        refImageUrl: rmg3,
+        type: "camera",
+      },
+      {
+        kind: "image",
+        title: "5. Logging :",
         subtitle: "Record Water Quantity & Cleaning Time",
         src: rmg4,
-        alt: "RMG Step 4 Logging",
+        alt: "RMG Step 5 Logging",
       },
       {
         kind: "image",
-        title: "5. Scrubbing :",
+        title: "6. Scrubbing :",
         subtitle: "Manual Cleaning with Approved Detergent",
         src: rmg5,
-        alt: "RMG Step 5 Scrubbing",
+        alt: "RMG Step 6 Scrubbing",
       },
       {
         kind: "image",
-        title: "6. Fluid Flush :",
+        title: "7. Fluid Flush :",
         subtitle: "Rinse with Measured Water",
         src: rmg6,
-        alt: "RMG Step 6 Rinsing",
+        alt: "RMG Step 7 Rinsing",
       },
       {
         kind: "image",
-        title: "7. Tight Inspection :",
+        title: "8. Tight Inspection :",
         subtitle: "Inspect & Verify Difficult-to-Clean Areas",
         src: rmg7,
-        alt: "RMG Step 7 Inspection",
+        alt: "RMG Step 8 Inspection",
       },
       {
         kind: "image",
-        title: "8. Quality Control :",
+        title: "9. Quality Control :",
         subtitle: "Swab or Rinse Sampling",
         src: rmg8,
-        alt: "RMG Step 8 Swabbing",
+        alt: "RMG Step 9 Swabbing",
+        refImageUrl: rmg8,
+        type: "camera",
       },
       {
         kind: "image",
-        title: "9. De-moisturize :",
+        title: "10. De-moisturize :",
         subtitle: "Dry All Components",
         src: rmg9,
-        alt: "RMG Step 9 Drying",
+        alt: "RMG Step 10 Drying",
       },
       {
         kind: "image",
-        title: "10. Assemble Parts :",
+        title: "11. Assemble Parts :",
         subtitle: "Reassemble the RMG",
         src: rmg10,
-        alt: "RMG Step 10 Assembly",
+        alt: "RMG Step 11 Assembly",
       },
       {
         kind: "image",
-        title: "11. Sign-off :",
+        title: "12. Sign-off :",
         subtitle: "Final Visual Verification",
         src: rmg11,
-        alt: "RMG Step 11 Verification",
+        alt: "RMG Step 12 Verification",
       },
     ],
   },
@@ -646,8 +661,32 @@ function AmcTab({ machineName }: { machineName: string }) {
   const [rows, setRows] = useState<AmcRow[]>(() => {
     try {
       const saved = localStorage.getItem(`arizon_amc_${machineName}`);
-      if (saved) return JSON.parse(saved);
-      if (machineName === "Rapid Mixer Granulator (RMG)") return rmgAmcRowsSeed;
+      if (saved) {
+        const parsed: AmcRow[] = JSON.parse(saved);
+        // For RMG, detect stale seed cache by checking if the part-change step exists
+        if (machineName === "Rapid Mixer Granulator (RMG)") {
+          const rmgSop = parsed.find((r) => r.title === "RMG Annual Maintenance Service");
+          const hasPartChangeStep = rmgSop?.steps?.some((s) => (s as any).isPartChange);
+          const storedVersion = parseInt(localStorage.getItem("arizon_amc_rmg_seed_version") || "0", 10);
+          if (!hasPartChangeStep || storedVersion < RMG_AMC_SEED_VERSION) {
+            // Stale cache — merge seed steps into cached row but keep user-added SOPs
+            const mergedRows = parsed.map((r) =>
+              r.title === "RMG Annual Maintenance Service"
+                ? { ...rmgAmcRowsSeed[0], prereqs: r.prereqs ?? rmgAmcRowsSeed[0].prereqs }
+                : r
+            );
+            // If RMG SOP not in parsed at all, add it
+            if (!rmgSop) mergedRows.unshift(rmgAmcRowsSeed[0]);
+            localStorage.setItem("arizon_amc_rmg_seed_version", String(RMG_AMC_SEED_VERSION));
+            return mergedRows;
+          }
+        }
+        return parsed;
+      }
+      if (machineName === "Rapid Mixer Granulator (RMG)") {
+        localStorage.setItem("arizon_amc_rmg_seed_version", String(RMG_AMC_SEED_VERSION));
+        return rmgAmcRowsSeed;
+      }
       const isDefault = defaultMachines.some((m) => m.name === machineName);
       return isDefault ? amcRowsSeed : [];
     } catch (e) {

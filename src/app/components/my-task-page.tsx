@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import jsQR from "jsqr";
-import { Search, FileText, XCircle, ArrowUpRight, X, ChevronLeft, ChevronRight, Play, Check, Upload, QrCode, Camera, Maximize2, ArrowLeft, ArrowRight, Image } from "lucide-react";
+import { Search, FileText, XCircle, ArrowUpRight, X, ChevronLeft, ChevronRight, Play, Check, Upload, QrCode, Camera, Maximize2, ArrowLeft, ArrowRight, Image, RefreshCw } from "lucide-react";
 import { type ScheduleRow } from "./generate-schedule-modal";
 import { defaultSchedules } from "./schedule-page";
 
@@ -33,7 +33,9 @@ export type TrainingTask = {
   certificateExpiryDate: string;
   remarks: string;
   timeTaken?: number; // duration in seconds
+  sopType?: string;
 };
+
 
 export type SopStep = {
   title: string;
@@ -44,6 +46,7 @@ export type SopStep = {
   stepSignificance?: string;
   type?: "info" | "camera" | "critical" | "normal";
   refImageUrl?: string;
+  isPartChange?: boolean;
 };
 
 export const taskStepsMap: Record<string, SopStep[]> = {
@@ -76,7 +79,18 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "normal"
     },
     {
-      title: "Step 4: Logging",
+      title: "Step 4: Seal & O-Ring Replacement",
+      mediaUrl: rmg3,
+      qrRequired: false,
+      desc: "Replace Impeller O-Ring and Chopper Seal Kit. Remove worn seals and install new O-Ring and Chopper Seal Kit from the prerequisites kit. Photograph the old part before removal and the new part after installation.",
+      ans: "New O-Ring and Chopper Seal Kit installed and verified.",
+      stepSignificance: "Critical wear parts — replacing seals prevents product contamination and equipment damage.",
+      type: "camera",
+      refImageUrl: rmg3,
+      isPartChange: true
+    },
+    {
+      title: "Step 5: Logging",
       mediaUrl: rmg4,
       qrRequired: false,
       desc: "Record Water Quantity & Cleaning Time. Measure cleaning fluids used to ensure compliance.",
@@ -85,7 +99,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "normal"
     },
     {
-      title: "Step 5: Scrubbing",
+      title: "Step 6: Scrubbing",
       mediaUrl: rmg5,
       qrRequired: false,
       desc: "Manual Cleaning with Approved Detergent. Scrub interior surfaces with non-abrasive pads.",
@@ -94,7 +108,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "normal"
     },
     {
-      title: "Step 6: Fluid Flush",
+      title: "Step 7: Fluid Flush",
       mediaUrl: rmg6,
       qrRequired: false,
       desc: "Rinse with Measured Water. Wash out all detergent residue with purified water.",
@@ -103,7 +117,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "normal"
     },
     {
-      title: "Step 7: Tight Inspection",
+      title: "Step 8: Tight Inspection",
       mediaUrl: rmg7,
       qrRequired: true,
       desc: "Inspect & Verify Difficult-to-Clean Areas. Check scraper blade and discharge valve seals.",
@@ -112,7 +126,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "critical"
     },
     {
-      title: "Step 8: Quality Control",
+      title: "Step 9: Quality Control",
       mediaUrl: rmg8,
       qrRequired: false,
       desc: "Swab or Rinse Sampling. Collect chemical swabs for TOC/HPLC analysis.",
@@ -122,7 +136,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       refImageUrl: rmg8
     },
     {
-      title: "Step 9: De-moisturize",
+      title: "Step 10: De-moisturize",
       mediaUrl: rmg9,
       qrRequired: false,
       desc: "Dry All Components. Blow dry with filtered compressed air.",
@@ -131,7 +145,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "normal"
     },
     {
-      title: "Step 10: Assemble Parts",
+      title: "Step 11: Assemble Parts",
       mediaUrl: rmg10,
       qrRequired: true,
       desc: "Reassemble the RMG. Re-fit the impeller and tighten the chopper assembly.",
@@ -140,7 +154,7 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       type: "normal"
     },
     {
-      title: "Step 11: Sign-off",
+      title: "Step 12: Sign-off",
       mediaUrl: rmg11,
       qrRequired: false,
       desc: "Final Visual Verification. Verify clean status and clearance sign-off.",
@@ -279,7 +293,8 @@ export const taskStepsMap: Record<string, SopStep[]> = {
       ans: "New filters seated; vacuum pressure reads within range.",
       stepSignificance: "Maintains optimal containment negative pressure.",
       type: "camera", // Requires photo!
-      refImageUrl: image1
+      refImageUrl: image1,
+      isPartChange: true
     }
   ]
 };
@@ -313,6 +328,73 @@ export function getSopSteps(machineTitle: string, sopTitle: string): SopStep[] {
       const rows = JSON.parse(savedAmc);
       const match = rows.find((r: any) => r.title === sopTitle);
       if (match && match.steps && match.steps.length > 0) {
+        // Migration for RMG Annual Maintenance Service to rename step 3a to step 4, and increment others
+        if (machineTitle === "Rapid Mixer Granulator (RMG)" && sopTitle === "RMG Annual Maintenance Service") {
+          let needsMigration = false;
+          const migratedSteps = match.steps.map((st: any) => {
+            let title = st.title || "";
+            let type = st.type || "normal";
+            let refImageUrl = st.refImageUrl || "";
+            let isPartChange = st.isPartChange || false;
+
+            if (title.includes("3a")) {
+              needsMigration = true;
+              title = title.replace("3a.", "4.").replace("Step 3a:", "Step 4:");
+            } else if (title.includes("11. Sign-off") || title.includes("Step 11: Sign-off")) {
+              needsMigration = true;
+              title = title.replace("11. Sign-off", "12. Sign-off").replace("Step 11: Sign-off", "Step 12: Sign-off");
+            } else if (title.includes("10. Assemble") || title.includes("Step 10: Assemble")) {
+              needsMigration = true;
+              title = title.replace("10. Assemble", "11. Assemble").replace("Step 10: Assemble", "Step 11: Assemble");
+            } else if (title.includes("9. De-moisturize") || title.includes("Step 9: De-moisturize")) {
+              needsMigration = true;
+              title = title.replace("9. De-moisturize", "10. De-moisturize").replace("Step 9: De-moisturize", "Step 10: De-moisturize");
+            } else if (title.includes("8. Quality") || title.includes("Step 8: Quality")) {
+              needsMigration = true;
+              title = title.replace("8. Quality", "9. Quality").replace("Step 8: Quality", "Step 9: Quality");
+            } else if (title.includes("7. Tight") || title.includes("Step 7: Tight")) {
+              needsMigration = true;
+              title = title.replace("7. Tight", "8. Tight").replace("Step 7: Tight", "Step 8: Tight");
+            } else if (title.includes("6. Fluid") || title.includes("Step 6: Fluid")) {
+              needsMigration = true;
+              title = title.replace("6. Fluid", "7. Fluid").replace("Step 6: Fluid", "Step 7: Fluid");
+            } else if (title.includes("5. Scrubbing") || title.includes("Step 5: Scrubbing")) {
+              needsMigration = true;
+              title = title.replace("5. Scrubbing", "6. Scrubbing").replace("Step 5: Scrubbing", "Step 6: Scrubbing");
+            } else if (title.includes("4. Logging") || title.includes("Step 4: Logging")) {
+              needsMigration = true;
+              title = title.replace("4. Logging", "5. Logging").replace("Step 4: Logging", "Step 5: Logging");
+            }
+
+            // Verify types and reference images
+            if (title.includes("Step 4:") || title.includes("4. Seal & O-Ring")) {
+              if (type !== "camera" || !refImageUrl || !isPartChange) {
+                needsMigration = true;
+                type = "camera";
+                refImageUrl = rmg3;
+                isPartChange = true;
+              }
+            } else if (title.includes("Step 9:") || title.includes("9. Quality Control")) {
+              if (type !== "camera" || !refImageUrl) {
+                needsMigration = true;
+                type = "camera";
+                refImageUrl = rmg8;
+              }
+            }
+
+            return { ...st, title, type, refImageUrl, isPartChange };
+          });
+          
+          if (needsMigration) {
+            match.steps = migratedSteps;
+            try {
+              localStorage.setItem(`arizon_amc_${machineTitle}`, JSON.stringify(rows));
+            } catch (e) {
+              console.error("Failed to save migrated AMC steps:", e);
+            }
+          }
+        }
+
         return match.steps.map((st: any) => ({
           title: st.title || "",
           mediaUrl: st.src || st.mediaUrl || "",
@@ -322,6 +404,7 @@ export function getSopSteps(machineTitle: string, sopTitle: string): SopStep[] {
           stepSignificance: st.stepSignificance || "",
           type: st.type || "normal",
           refImageUrl: st.refImageUrl || "",
+          isPartChange: st.isPartChange || false,
         }));
       }
     }
@@ -336,6 +419,73 @@ export function getSopSteps(machineTitle: string, sopTitle: string): SopStep[] {
       const rows = JSON.parse(savedMaint);
       const match = rows.find((r: any) => r.title === sopTitle);
       if (match && match.steps && match.steps.length > 0) {
+        // Migration for RMG Annual Maintenance Service to rename step 3a to step 4, and increment others
+        if (machineTitle === "Rapid Mixer Granulator (RMG)" && sopTitle === "RMG Annual Maintenance Service") {
+          let needsMigration = false;
+          const migratedSteps = match.steps.map((st: any) => {
+            let title = st.title || "";
+            let type = st.type || "normal";
+            let refImageUrl = st.refImageUrl || "";
+            let isPartChange = st.isPartChange || false;
+
+            if (title.includes("3a")) {
+              needsMigration = true;
+              title = title.replace("3a.", "4.").replace("Step 3a:", "Step 4:");
+            } else if (title.includes("11. Sign-off") || title.includes("Step 11: Sign-off")) {
+              needsMigration = true;
+              title = title.replace("11. Sign-off", "12. Sign-off").replace("Step 11: Sign-off", "Step 12: Sign-off");
+            } else if (title.includes("10. Assemble") || title.includes("Step 10: Assemble")) {
+              needsMigration = true;
+              title = title.replace("10. Assemble", "11. Assemble").replace("Step 10: Assemble", "Step 11: Assemble");
+            } else if (title.includes("9. De-moisturize") || title.includes("Step 9: De-moisturize")) {
+              needsMigration = true;
+              title = title.replace("9. De-moisturize", "10. De-moisturize").replace("Step 9: De-moisturize", "Step 10: De-moisturize");
+            } else if (title.includes("8. Quality") || title.includes("Step 8: Quality")) {
+              needsMigration = true;
+              title = title.replace("8. Quality", "9. Quality").replace("Step 8: Quality", "Step 9: Quality");
+            } else if (title.includes("7. Tight") || title.includes("Step 7: Tight")) {
+              needsMigration = true;
+              title = title.replace("7. Tight", "8. Tight").replace("Step 7: Tight", "Step 8: Tight");
+            } else if (title.includes("6. Fluid") || title.includes("Step 6: Fluid")) {
+              needsMigration = true;
+              title = title.replace("6. Fluid", "7. Fluid").replace("Step 6: Fluid", "Step 7: Fluid");
+            } else if (title.includes("5. Scrubbing") || title.includes("Step 5: Scrubbing")) {
+              needsMigration = true;
+              title = title.replace("5. Scrubbing", "6. Scrubbing").replace("Step 5: Scrubbing", "Step 6: Scrubbing");
+            } else if (title.includes("4. Logging") || title.includes("Step 4: Logging")) {
+              needsMigration = true;
+              title = title.replace("4. Logging", "5. Logging").replace("Step 4: Logging", "Step 5: Logging");
+            }
+
+            // Verify types and reference images
+            if (title.includes("Step 4:") || title.includes("4. Seal & O-Ring")) {
+              if (type !== "camera" || !refImageUrl || !isPartChange) {
+                needsMigration = true;
+                type = "camera";
+                refImageUrl = rmg3;
+                isPartChange = true;
+              }
+            } else if (title.includes("Step 9:") || title.includes("9. Quality Control")) {
+              if (type !== "camera" || !refImageUrl) {
+                needsMigration = true;
+                type = "camera";
+                refImageUrl = rmg8;
+              }
+            }
+
+            return { ...st, title, type, refImageUrl, isPartChange };
+          });
+          
+          if (needsMigration) {
+            match.steps = migratedSteps;
+            try {
+              localStorage.setItem(`arizon_maintenance_${machineTitle}`, JSON.stringify(rows));
+            } catch (e) {
+              console.error("Failed to save migrated Maintenance steps:", e);
+            }
+          }
+        }
+
         return match.steps.map((st: any) => ({
           title: st.title || "",
           mediaUrl: st.src || st.mediaUrl || "",
@@ -345,6 +495,7 @@ export function getSopSteps(machineTitle: string, sopTitle: string): SopStep[] {
           stepSignificance: st.stepSignificance || "",
           type: st.type || "normal",
           refImageUrl: st.refImageUrl || "",
+          isPartChange: st.isPartChange || false,
         }));
       }
     }
@@ -360,7 +511,9 @@ export const validateStep = (
   step: SopStep,
   remarks: string,
   qrVerified: boolean,
-  attachment: string
+  attachment: string,
+  oldPartAttachment?: string,
+  newPartAttachment?: string
 ) => {
   // 1. QR Code Scan Checks
   if (step.qrRequired && !qrVerified) {
@@ -372,12 +525,247 @@ export const validateStep = (
     return { isValid: false, error: "Please attach a photo for this step." };
   }
 
-  // 3. Remarks Check (Cannot be blank, empty, or space-only)
+  // 3. Part Change Evidence Check
+  if (step.isPartChange && (!oldPartAttachment || !newPartAttachment)) {
+    return { isValid: false, error: "Please upload evidence for both old and new parts." };
+  }
+
+  // 4. Remarks Check (Cannot be blank, empty, or space-only)
   if (!remarks || !remarks.trim()) {
     return { isValid: false, error: "Remarks are required before moving forward." };
   }
 
   return { isValid: true, error: "" };
+};
+
+export type PrereqItem = {
+  id: string;
+  name: string;
+  category: "Tooling" | "Consumables" | "Safety" | "Calibration";
+  tag: string;
+  required: boolean;
+  description: string;
+};
+
+export type PrereqProgress = {
+  checked: Record<string, boolean>;
+  attachments: Record<string, string>;
+  attachmentUrls: Record<string, string>;
+  completed: boolean;
+};
+
+
+/**
+ * Seed prereq data mirroring what's in machine-detail-page.tsx rmgAmcRowsSeed / amcRowsSeed.
+ * Keyed by exact SOP title for O(1) lookup without requiring machine detail page to be visited.
+ */
+const SOP_PREREQ_SEED: Record<string, { itemTitle: string; quantity: number; unit: string }[]> = {
+  "RMG Annual Maintenance Service": [
+    { itemTitle: "Impeller O-Ring", quantity: 1, unit: "pc" },
+    { itemTitle: "Chopper Seal Kit", quantity: 1, unit: "kit" },
+    { itemTitle: "Sanitary Cleaning Detergent", quantity: 5, unit: "litres" },
+  ],
+  "Annual Turret Service": [
+    { itemTitle: "Lubrication Oil", quantity: 5, unit: "litres" },
+    { itemTitle: "O-Ring Kit", quantity: 2, unit: "kits" },
+  ],
+  "Quarterly Drive Inspection": [
+    { itemTitle: "Drive Belt Set", quantity: 1, unit: "set" },
+    { itemTitle: "Contact Grease NLGI-2", quantity: 1, unit: "tube" },
+  ],
+};
+
+/**
+ * Converts raw prereq rows (from AMC SOP form) to PrereqItem[] used by the verification modal.
+ */
+const mapPrereqRows = (
+  rows: { itemTitle: string; quantity: number; unit: string }[]
+): PrereqItem[] =>
+  rows.map((p, idx) => ({
+    id: `sop-prereq-${idx}-${p.itemTitle.replace(/\s+/g, "-").toLowerCase()}`,
+    name: p.itemTitle,
+    category: "Consumables" as const,
+    tag: `QTY-${p.quantity} ${p.unit}`,
+    required: true,
+    description: `Required quantity: ${p.quantity} ${p.unit}`,
+  }));
+
+/**
+ * Returns prereqs for a specific AMC SOP.
+ * Priority:
+ *   1. localStorage (arizon_amc_<machine>) — saved by machine detail AMC tab, highest priority
+ *   2. SOP_PREREQ_SEED — built-in seed data covering default SOPs (works even if machine page was never opened)
+ *   3. getPrereqsForMachine(machine) — generic machine-level fallback
+ */
+export const getPrereqsForSop = (machine: string, sopTitle: string): PrereqItem[] => {
+  // 1. Try localStorage first (user may have edited the AMC SOP or added a new one)
+  try {
+    const saved = localStorage.getItem(`arizon_amc_${machine}`);
+    if (saved) {
+      const rows: { title: string; type: string; prereqs?: { itemTitle: string; quantity: number; unit: string }[] }[] = JSON.parse(saved);
+      const match = rows.find((r) => r.title === sopTitle);
+      if (match && match.prereqs && match.prereqs.length > 0) {
+        return mapPrereqRows(match.prereqs);
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load SOP-specific prereqs from localStorage:", e);
+  }
+
+  // 2. Try built-in seed data (covers default SOPs before machine page is ever opened)
+  if (SOP_PREREQ_SEED[sopTitle] && SOP_PREREQ_SEED[sopTitle].length > 0) {
+    return mapPrereqRows(SOP_PREREQ_SEED[sopTitle]);
+  }
+
+  // 3. Generic machine-level fallback
+  return getPrereqsForMachine(machine);
+};
+
+
+export const getPrereqsForMachine = (machine: string): PrereqItem[] => {
+  const normMachine = machine.toLowerCase();
+  if (normMachine.includes("granulator") || normMachine.includes("rmg")) {
+    return [
+      {
+        id: "RMG-TL-09",
+        name: "RMG Special Turret Alignment Jig",
+        category: "Tooling",
+        tag: "RMG-TL-09",
+        required: true,
+        description: "Special tool for main impeller and chopper blade alignment checks.",
+      },
+      {
+        id: "RMG-SEAL-14",
+        name: "Silicone Seal Ring Gasket 320mm",
+        category: "Consumables",
+        tag: "RMG-SEAL-14",
+        required: true,
+        description: "FDA-compliant replacement seal for main discharge valve.",
+      },
+      {
+        id: "RMG-CAL-23",
+        name: "Digital Caliper 0-150mm",
+        category: "Calibration",
+        tag: "RMG-CAL-23",
+        required: true,
+        description: "Calibrated digital caliper for blade-to-wall clearance measurement.",
+      },
+      {
+        id: "RMG-LOTO-08",
+        name: "LOTO Main Air Valve Lock & Tags",
+        category: "Safety",
+        tag: "RMG-LOTO-08",
+        required: true,
+        description: "Lockout padlocks and tagout cards to secure main compressed air supply.",
+      },
+    ];
+  } else if (normMachine.includes("cadmach")) {
+    return [
+      {
+        id: "CAD-TL-11",
+        name: "CADMACH Turret Lower Punch Die Key",
+        category: "Tooling",
+        tag: "CAD-TL-11",
+        required: true,
+        description: "T-bar key wrench for securing lower punch dies in the turret.",
+      },
+      {
+        id: "CAD-CONS-88",
+        name: "Compression Roll Lubricating Oil ISO VG 150",
+        category: "Consumables",
+        tag: "CAD-CONS-88",
+        required: true,
+        description: "Food-grade high-viscosity oil for main roll bearings.",
+      },
+      {
+        id: "CAD-CAL-02",
+        name: "Torque Wrench 10-100 Nm",
+        category: "Calibration",
+        tag: "CAD-CAL-02",
+        required: true,
+        description: "Torque wrench with valid calibration tag for turret bolt torque check.",
+      },
+      {
+        id: "CAD-LOTO-02",
+        name: "High-Visibility Danger Barrier Signs",
+        category: "Safety",
+        tag: "CAD-LOTO-02",
+        required: true,
+        description: "Yellow/black hazard tapes and signposts to isolate the compressor zone.",
+      },
+    ];
+  } else if (normMachine.includes("korsch")) {
+    return [
+      {
+        id: "KSH-TL-77",
+        name: "Korsch Upper Punch Alignment Sleeve",
+        category: "Tooling",
+        tag: "KSH-TL-77",
+        required: true,
+        description: "Alignment tool for checking punch guide concentricity.",
+      },
+      {
+        id: "KSH-CONS-104",
+        name: "Turret Segment O-Ring Pack",
+        category: "Consumables",
+        tag: "KSH-CONS-104",
+        required: true,
+        description: "High-temp segment packing seal kit.",
+      },
+      {
+        id: "KSH-CAL-99",
+        name: "Punch Force Sensor Calibrator",
+        category: "Calibration",
+        tag: "KSH-CAL-99",
+        required: true,
+        description: "Validation unit to verify force sensors against master weight load.",
+      },
+      {
+        id: "KSH-LOTO-01",
+        name: "Standard LOTO Lock & Tagout Padlock",
+        category: "Safety",
+        tag: "KSH-LOTO-01",
+        required: true,
+        description: "Standard red safety padlock for electrical panel isolation.",
+      },
+    ];
+  } else {
+    // General / Generic AMC fallback
+    return [
+      {
+        id: "GEN-TL-01",
+        name: "Standard AMC Maintenance Tool Kit",
+        category: "Tooling",
+        tag: "GEN-TL-01",
+        required: true,
+        description: "Metric Allen keys, spanners, and flathead screwdrivers.",
+      },
+      {
+        id: "GEN-CONS-02",
+        name: "Synthetic Grease NLGI-2",
+        category: "Consumables",
+        tag: "GEN-CONS-02",
+        required: true,
+        description: "Food-grade grease cartridge for general lubrication points.",
+      },
+      {
+        id: "GEN-CAL-03",
+        name: "Calibrated Torque Wrench",
+        category: "Calibration",
+        tag: "GEN-CAL-03",
+        required: true,
+        description: "Handheld torque wrench with quarterly calibration stickers.",
+      },
+      {
+        id: "GEN-LOTO-04",
+        name: "Safety LOTO Padlock and Warning Tag",
+        category: "Safety",
+        tag: "GEN-LOTO-04",
+        required: true,
+        description: "LOTO padlock and 'Do Not Operate' tagout card.",
+      },
+    ];
+  }
 };
 
 export function MyTaskPage() {
@@ -404,6 +792,7 @@ export function MyTaskPage() {
             requestExpiryDate: row.scheduledDate,
             certificateExpiryDate: row.completionDate,
             remarks: row.remarks || "",
+            sopType: row.sopType || "",
           };
         });
         setTasks(mapped);
@@ -480,6 +869,74 @@ export function MyTaskPage() {
   const [stepAttachmentUrl, setStepAttachmentUrl] = useState<string>("");
   const [stepQrVerified, setStepQrVerified] = useState<boolean>(false);
 
+  // Part replacement states
+  const [oldPartAttachment, setOldPartAttachment] = useState<string>("");
+  const [oldPartAttachmentUrl, setOldPartAttachmentUrl] = useState<string>("");
+  const [newPartAttachment, setNewPartAttachment] = useState<string>("");
+  const [newPartAttachmentUrl, setNewPartAttachmentUrl] = useState<string>("");
+  const [partModalOpen, setPartModalOpen] = useState<boolean>(false);
+  const [uploadTarget, setUploadTarget] = useState<string>("standard");
+
+  // Prerequisite check states
+  const [prereqProgress, setPrereqProgress] = useState<Record<string, PrereqProgress>>(() => {
+    try {
+      const saved = localStorage.getItem("arizon_prereq_progress");
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      console.error("Failed to load prerequisite progress:", e);
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("arizon_prereq_progress", JSON.stringify(prereqProgress));
+    } catch (e) {
+      console.error("Failed to save prerequisite progress:", e);
+    }
+  }, [prereqProgress]);
+
+  const [showPrereqModal, setShowPrereqModal] = useState<boolean>(false);
+  const [viewPrereqOnly, setViewPrereqOnly] = useState<boolean>(false);
+
+  const toggleCheck = (itemId: string) => {
+    if (!activeSopTask) return;
+    setPrereqProgress((prev) => {
+      const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+      return {
+        ...prev,
+        [activeSopTask.id]: {
+          ...taskProg,
+          checked: {
+            ...taskProg.checked,
+            [itemId]: !taskProg.checked[itemId],
+          },
+        },
+      };
+    });
+  };
+
+  const removeAttachment = (itemId: string) => {
+    if (!activeSopTask) return;
+    setPrereqProgress((prev) => {
+      const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+      const newAttachments = { ...taskProg.attachments };
+      const newAttachmentUrls = { ...taskProg.attachmentUrls };
+      delete newAttachments[itemId];
+      delete newAttachmentUrls[itemId];
+      return {
+        ...prev,
+        [activeSopTask.id]: {
+          ...taskProg,
+          attachments: newAttachments,
+          attachmentUrls: newAttachmentUrls,
+        },
+      };
+    });
+  };
+
+
+
   // Lightbox & Webcam States
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
   const [webcamModalOpen, setWebcamModalOpen] = useState<boolean>(false);
@@ -519,24 +976,91 @@ export function MyTaskPage() {
         if (ctx) {
           ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
           const dataUrl = canvas.toDataURL("image/png");
-          setStepAttachmentUrl(dataUrl);
-          setStepAttachment(`snap-${Date.now()}.png`);
+          if (uploadTarget.startsWith("prereq-")) {
+            const prereqId = uploadTarget.substring("prereq-".length);
+            if (activeSopTask) {
+              setPrereqProgress((prev) => {
+                const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+                return {
+                  ...prev,
+                  [activeSopTask.id]: {
+                    ...taskProg,
+                    attachments: { ...taskProg.attachments, [prereqId]: `prereq-snap-${Date.now()}.png` },
+                    attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: dataUrl }
+                  }
+                };
+              });
+            }
+          } else if (uploadTarget === "old") {
+            setOldPartAttachmentUrl(dataUrl);
+            setOldPartAttachment(`old-part-snap-${Date.now()}.png`);
+          } else if (uploadTarget === "new") {
+            setNewPartAttachmentUrl(dataUrl);
+            setNewPartAttachment(`new-part-snap-${Date.now()}.png`);
+          } else {
+            setStepAttachmentUrl(dataUrl);
+            setStepAttachment(`snap-${Date.now()}.png`);
+          }
         }
       } catch (e) {
-        // Fallback simulation
+        if (uploadTarget.startsWith("prereq-")) {
+          const prereqId = uploadTarget.substring("prereq-".length);
+          if (activeSopTask) {
+            setPrereqProgress((prev) => {
+              const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+              return {
+                ...prev,
+                [activeSopTask.id]: {
+                  ...taskProg,
+                  attachments: { ...taskProg.attachments, [prereqId]: `mock-prereq-snap-${Date.now()}.png` },
+                  attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: image1 }
+                }
+              };
+            });
+          }
+        } else if (uploadTarget === "old") {
+          setOldPartAttachmentUrl(image1);
+          setOldPartAttachment(`mock-old-snap-${Date.now()}.png`);
+        } else if (uploadTarget === "new") {
+          setNewPartAttachmentUrl(image1);
+          setNewPartAttachment(`mock-new-snap-${Date.now()}.png`);
+        } else {
+          setStepAttachmentUrl(image1);
+          setStepAttachment(`mock-snap-${Date.now()}.png`);
+        }
+      }
+    } else {
+      if (uploadTarget.startsWith("prereq-")) {
+        const prereqId = uploadTarget.substring("prereq-".length);
+        if (activeSopTask) {
+          setPrereqProgress((prev) => {
+            const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+            return {
+              ...prev,
+              [activeSopTask.id]: {
+                ...taskProg,
+                attachments: { ...taskProg.attachments, [prereqId]: `mock-prereq-snap-${Date.now()}.png` },
+                attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: image1 }
+              }
+            };
+          });
+        }
+      } else if (uploadTarget === "old") {
+        setOldPartAttachmentUrl(image1);
+        setOldPartAttachment(`mock-old-snap-${Date.now()}.png`);
+      } else if (uploadTarget === "new") {
+        setNewPartAttachmentUrl(image1);
+        setNewPartAttachment(`mock-new-snap-${Date.now()}.png`);
+      } else {
         setStepAttachmentUrl(image1);
         setStepAttachment(`mock-snap-${Date.now()}.png`);
       }
-    } else {
-      // Fallback simulation (e.g. no camera connected)
-      setStepAttachmentUrl(image1);
-      setStepAttachment(`mock-snap-${Date.now()}.png`);
     }
     stopCamera();
   };
 
   // SOP progress state per task ID
-  const [sopProgress, setSopProgress] = useState<Record<string, Record<number, { remarks: string; qrScanned: boolean; attachmentName: string; attachmentUrl?: string }>>>(() => {
+  const [sopProgress, setSopProgress] = useState<Record<string, Record<number, { remarks: string; qrScanned: boolean; attachmentName: string; attachmentUrl?: string; oldPartAttachmentName?: string; oldPartAttachmentUrl?: string; newPartAttachmentName?: string; newPartAttachmentUrl?: string }>>>(() => {
     try {
       const saved = localStorage.getItem("arizon_sop_progress");
       return saved ? JSON.parse(saved) : {};
@@ -558,11 +1082,15 @@ export function MyTaskPage() {
   useEffect(() => {
     if (activeSopTask) {
       const taskProg = sopProgress[activeSopTask.id] || {};
-      const stepProg = taskProg[sopStepIndex] || { remarks: "", qrScanned: false, attachmentName: "", attachmentUrl: "" };
+      const stepProg = taskProg[sopStepIndex] || { remarks: "", qrScanned: false, attachmentName: "", attachmentUrl: "", oldPartAttachmentName: "", oldPartAttachmentUrl: "", newPartAttachmentName: "", newPartAttachmentUrl: "" };
       setStepRemarks(stepProg.remarks || "");
       setStepAttachment(stepProg.attachmentName || "");
       setStepAttachmentUrl(stepProg.attachmentUrl || "");
       setStepQrVerified(stepProg.qrScanned || false);
+      setOldPartAttachment(stepProg.oldPartAttachmentName || "");
+      setOldPartAttachmentUrl(stepProg.oldPartAttachmentUrl || "");
+      setNewPartAttachment(stepProg.newPartAttachmentName || "");
+      setNewPartAttachmentUrl(stepProg.newPartAttachmentUrl || "");
       setIsScanning(false);
     }
   }, [activeSopTask, sopStepIndex, sopProgress]);
@@ -652,6 +1180,10 @@ export function MyTaskPage() {
         qrScanned: stepQrVerified,
         attachmentName: stepAttachment,
         attachmentUrl: stepAttachmentUrl,
+        oldPartAttachmentName: oldPartAttachment,
+        oldPartAttachmentUrl: oldPartAttachmentUrl,
+        newPartAttachmentName: newPartAttachment,
+        newPartAttachmentUrl: newPartAttachmentUrl,
       }
     };
 
@@ -704,6 +1236,10 @@ export function MyTaskPage() {
         qrScanned: stepQrVerified,
         attachmentName: stepAttachment,
         attachmentUrl: stepAttachmentUrl,
+        oldPartAttachmentName: oldPartAttachment,
+        oldPartAttachmentUrl: oldPartAttachmentUrl,
+        newPartAttachmentName: newPartAttachment,
+        newPartAttachmentUrl: newPartAttachmentUrl,
       }
     };
     setSopProgress(prev => ({
@@ -722,6 +1258,10 @@ export function MyTaskPage() {
         qrScanned: stepQrVerified,
         attachmentName: stepAttachment,
         attachmentUrl: stepAttachmentUrl,
+        oldPartAttachmentName: oldPartAttachment,
+        oldPartAttachmentUrl: oldPartAttachmentUrl,
+        newPartAttachmentName: newPartAttachment,
+        newPartAttachmentUrl: newPartAttachmentUrl,
       }
     };
     setSopProgress(prev => ({
@@ -754,6 +1294,10 @@ export function MyTaskPage() {
           qrScanned: stepQrVerified,
           attachmentName: stepAttachment,
           attachmentUrl: stepAttachmentUrl,
+          oldPartAttachmentName: oldPartAttachment,
+          oldPartAttachmentUrl: oldPartAttachmentUrl,
+          newPartAttachmentName: newPartAttachment,
+          newPartAttachmentUrl: newPartAttachmentUrl,
         }
       };
       setSopProgress(prev => ({
@@ -762,6 +1306,8 @@ export function MyTaskPage() {
       }));
     }
     setActiveSopTask(null);
+    setShowPrereqModal(false);
+    setViewPrereqOnly(false);
   };
 
   const handleStartScanning = async () => {
@@ -818,8 +1364,31 @@ export function MyTaskPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setStepAttachment(file.name);
-      setStepAttachmentUrl(URL.createObjectURL(file));
+      if (uploadTarget.startsWith("prereq-")) {
+        const prereqId = uploadTarget.substring("prereq-".length);
+        if (activeSopTask) {
+          setPrereqProgress((prev) => {
+            const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+            return {
+              ...prev,
+              [activeSopTask.id]: {
+                ...taskProg,
+                attachments: { ...taskProg.attachments, [prereqId]: file.name },
+                attachmentUrls: { ...taskProg.attachmentUrls, [prereqId]: URL.createObjectURL(file) }
+              }
+            };
+          });
+        }
+      } else if (uploadTarget === "old") {
+        setOldPartAttachment(file.name);
+        setOldPartAttachmentUrl(URL.createObjectURL(file));
+      } else if (uploadTarget === "new") {
+        setNewPartAttachment(file.name);
+        setNewPartAttachmentUrl(URL.createObjectURL(file));
+      } else {
+        setStepAttachment(file.name);
+        setStepAttachmentUrl(URL.createObjectURL(file));
+      }
     }
   };
 
@@ -974,6 +1543,11 @@ export function MyTaskPage() {
                       onClick={() => {
                         setActiveSopTask(t);
                         setSopStepIndex(0);
+                        if (t.sopType === "Comprehensive") {
+                          setShowPrereqModal(true);
+                        } else {
+                          setShowPrereqModal(false);
+                        }
                       }}
                       title="Perform task (SOP)"
                       className="hover:text-[#3A5764] transition-colors"
@@ -985,6 +1559,7 @@ export function MyTaskPage() {
                       onClick={() => {
                         setActiveSopTask(t);
                         setSopStepIndex(0);
+                        setShowPrereqModal(false);
                       }}
                       title="View SOP details"
                       className="hover:text-[#3A5764] transition-colors"
@@ -1051,6 +1626,7 @@ export function MyTaskPage() {
                         onClick={() => {
                           setActiveSopTask(t);
                           setSopStepIndex(0);
+                          setShowPrereqModal(false);
                         }}
                         title="View completed SOP"
                         className="hover:text-[#3A5764] transition-colors"
@@ -1114,15 +1690,223 @@ export function MyTaskPage() {
         className="hidden"
       />
 
+      {/* Prerequisites Modal */}
+      {activeSopTask && ((showPrereqModal && activeSopTask.currentStatus === "Assigned") || viewPrereqOnly) && (() => {
+        const items = getPrereqsForSop(activeSopTask.machineTitle, activeSopTask.trainingManualTitle);
+        const taskProg = prereqProgress[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+        const isPrereqReadOnly = viewPrereqOnly || activeSopTask.currentStatus !== "Assigned";
+        const allChecked = items.every(item => !item.required || taskProg.checked[item.id]);
+
+        return (
+          <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+            <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 my-8">
+              {/* Header */}
+              <div className="px-8 py-5 bg-gradient-to-r from-[#3A5764] to-[#2f4a55] text-white flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold tracking-wide">
+                    {isPrereqReadOnly ? "Comprehensive AMC Prerequisites (Read-Only)" : "Comprehensive AMC Prerequisites"}
+                  </h2>
+                  <p className="text-xs text-gray-200 mt-1">
+                    Verify required tools, safety equipment, consumables, and calibrations for <span className="font-semibold underline">{activeSopTask.machineTitle}</span>.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (viewPrereqOnly) {
+                      setViewPrereqOnly(false);
+                    } else {
+                      setActiveSopTask(null);
+                      setShowPrereqModal(false);
+                    }
+                  }}
+                  className="text-gray-200 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-8 bg-gray-50/50 flex-1 overflow-y-auto max-h-[60vh] [scrollbar-width:thin] [scrollbar-color:#3A5764_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#3A5764]/60 [&::-webkit-scrollbar-thumb]:rounded-full">
+                <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 text-amber-800 text-sm">
+                  <div className="shrink-0 mt-0.5">
+                    <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <span className="font-bold">Compliance Directive:</span> All items below must be physically verified at the station. Uploading photos of the ID tags or calibration stickers is recommended.
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {items.map((item) => {
+                    const isChecked = !!taskProg.checked[item.id];
+                    const attachmentName = taskProg.attachments[item.id];
+                    const attachmentUrl = taskProg.attachmentUrls[item.id];
+
+                    return (
+                      <div key={item.id} className={`border rounded-xl p-5 flex flex-col bg-white transition-all shadow-sm ${isChecked ? 'border-emerald-300 ring-1 ring-emerald-300/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                        {/* Top Metadata */}
+                        <div className="flex items-center justify-between mb-2.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            item.category === "Tooling" ? "bg-blue-50 text-blue-700 border border-blue-200" :
+                            item.category === "Consumables" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                            item.category === "Safety" ? "bg-red-50 text-red-700 border border-red-200" :
+                            "bg-purple-50 text-purple-700 border border-purple-200"
+                          }`}>
+                            {item.category}
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-mono font-semibold">ID: {item.tag}</span>
+                        </div>
+
+                        {/* Title and description */}
+                        <h3 className="text-gray-900 font-bold text-sm leading-snug">{item.name}</h3>
+                        <p className="text-gray-500 text-xs mt-1 leading-relaxed flex-1">{item.description}</p>
+
+                        {/* Checkbox and Upload Row */}
+                        <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col gap-3">
+                          {/* Checkbox */}
+                          <label className={`flex items-center gap-2.5 select-none ${isPrereqReadOnly ? 'cursor-default' : 'cursor-pointer'}`}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              disabled={isPrereqReadOnly}
+                              onChange={() => {
+                                if (isPrereqReadOnly) return;
+                                toggleCheck(item.id);
+                              }}
+                              className="w-4.5 h-4.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            />
+                            <span className="text-xs text-gray-750 font-semibold">Verify Item Present & Ready</span>
+                          </label>
+
+                          {/* Evidence upload */}
+                          <div className="flex flex-col gap-2">
+                            {attachmentName ? (
+                              <div className="flex items-center justify-between bg-blue-50/50 border border-blue-200 rounded-lg p-2">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                  {attachmentUrl ? (
+                                    <img
+                                      src={attachmentUrl}
+                                      className="w-8 h-8 rounded object-cover border border-blue-200 cursor-pointer"
+                                      alt="Thumbnail"
+                                      onClick={() => setEnlargedImage(attachmentUrl)}
+                                    />
+                                  ) : (
+                                    <FileText size={14} className="text-blue-500 shrink-0" />
+                                  )}
+                                  <span className="text-[11px] text-blue-700 font-medium truncate max-w-[130px]" title={attachmentName}>
+                                    {attachmentName}
+                                  </span>
+                                </div>
+                                {!isPrereqReadOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAttachment(item.id)}
+                                    className="text-red-500 hover:text-red-700 text-[10px] font-bold shrink-0 ml-1.5 cursor-pointer"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              !isPrereqReadOnly ? (
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setUploadTarget("prereq-" + item.id);
+                                      startCamera();
+                                    }}
+                                    className="flex-1 flex items-center justify-center gap-1 bg-[#3A5764] hover:bg-[#2f4a55] text-white px-2.5 py-1.5 rounded text-[11px] font-semibold transition-colors cursor-pointer"
+                                  >
+                                    <Camera size={12} /> Capture
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setUploadTarget("prereq-" + item.id);
+                                      handleTriggerUpload();
+                                    }}
+                                    className="flex-1 flex items-center justify-center gap-1 border border-gray-300 hover:bg-gray-50 text-gray-700 px-2.5 py-1.5 rounded text-[11px] font-semibold bg-white transition-colors cursor-pointer"
+                                  >
+                                    <Upload size={12} /> Upload
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-400 italic">No evidence uploaded</span>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-8 py-5 bg-gray-50 border-t border-gray-150 flex items-center justify-between">
+                {isPrereqReadOnly ? (
+                  <>
+                    <div />
+                    <button
+                      type="button"
+                      onClick={() => setViewPrereqOnly(false)}
+                      className="px-6 py-2.5 bg-[#3A5764] hover:bg-[#2f4a55] text-white rounded-md font-medium text-xs tracking-wider transition-colors uppercase cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSopTask(null);
+                        setShowPrereqModal(false);
+                      }}
+                      className="px-5 py-2.5 border border-gray-300 hover:bg-gray-100 text-gray-700 rounded-md font-medium text-xs tracking-wider transition-colors uppercase cursor-pointer"
+                    >
+                      Cancel & Exit
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!allChecked}
+                      onClick={() => {
+                        setPrereqProgress((prev) => {
+                          const taskProg = prev[activeSopTask.id] || { checked: {}, attachments: {}, attachmentUrls: {}, completed: false };
+                          return {
+                            ...prev,
+                            [activeSopTask.id]: {
+                              ...taskProg,
+                              completed: true,
+                            },
+                          };
+                        });
+                        setShowPrereqModal(false);
+                      }}
+                      className="px-6 py-2.5 bg-[#3A5764] hover:bg-[#2f4a55] text-white disabled:opacity-50 disabled:cursor-not-allowed rounded-md font-medium text-xs tracking-wider transition-colors uppercase cursor-pointer shadow-sm"
+                    >
+                      Proceed to SOP Execution
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* SOP Modal */}
-      {activeSopTask && (() => {
+      {activeSopTask && !showPrereqModal && !viewPrereqOnly && (() => {
         const steps = getSopSteps(activeSopTask.machineTitle, activeSopTask.trainingManualTitle);
         const step = steps[sopStepIndex] || steps[0];
         const isReadOnly = activeSopTask.currentStatus !== "Assigned";
         const isLastStep = sopStepIndex === steps.length - 1;
 
         // Perform step validation checks
-        const validation = validateStep(step, stepRemarks, stepQrVerified, stepAttachment);
+        const validation = validateStep(step, stepRemarks, stepQrVerified, stepAttachment, oldPartAttachment, newPartAttachment);
         const isStepValid = validation.isValid;
         const validationError = validation.error;
 
@@ -1146,6 +1930,15 @@ export function MyTaskPage() {
                     ( {activeSopTask.id.includes("amc") ? "operator" : "john"} )
                   </span>
                 </h3>
+                {activeSopTask.sopType === "Comprehensive" && (
+                  <button
+                    type="button"
+                    onClick={() => setViewPrereqOnly(true)}
+                    className="ml-auto mr-4 px-3 py-1.5 border border-gray-300 hover:border-[#3A5764] hover:text-[#3A5764] text-gray-700 rounded text-xs font-semibold bg-white transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <FileText size={14} /> View Prerequisites
+                  </button>
+                )}
                 <span
                   className={
                     "text-base font-semibold " +
@@ -1362,7 +2155,7 @@ export function MyTaskPage() {
                           Attachments
                         </span>
                         <div className="flex gap-3">
-                          {step.type === "camera" && (
+                          {(step.type === "camera" || step.isPartChange || !!step.refImageUrl) && (
                             <button
                               type="button"
                               disabled={!step.refImageUrl}
@@ -1382,7 +2175,10 @@ export function MyTaskPage() {
                           )}
                           <button
                             disabled={isReadOnly}
-                            onClick={startCamera}
+                            onClick={() => {
+                              setUploadTarget("standard");
+                              startCamera();
+                            }}
                             className="text-[#10B981] hover:text-emerald-700 disabled:opacity-50 transition-colors"
                             title="Capture Photo"
                           >
@@ -1390,12 +2186,28 @@ export function MyTaskPage() {
                           </button>
                           <button
                             disabled={isReadOnly}
-                            onClick={handleTriggerUpload}
+                            onClick={() => {
+                              setUploadTarget("standard");
+                              handleTriggerUpload();
+                            }}
                             className="text-[#10B981] hover:text-emerald-700 disabled:opacity-50 transition-colors"
                             title="Upload File"
                           >
                             <Upload size={22} />
                           </button>
+                          {step.isPartChange && (
+                            <button
+                              type="button"
+                              onClick={() => setPartModalOpen(true)}
+                              className="text-[#3A5764] hover:text-[#2f4a55] transition-colors relative"
+                              title="Part Replacement Evidence"
+                            >
+                              <RefreshCw size={22} className={oldPartAttachment && newPartAttachment ? "text-emerald-600" : "text-[#3A5764]"} />
+                              {(oldPartAttachment || newPartAttachment) && (
+                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white animate-pulse" />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
  
@@ -1421,9 +2233,66 @@ export function MyTaskPage() {
                             </button>
                           )}
                         </div>
-                      ) : (
+                      ) : !step.isPartChange ? (
                         <div className="text-sm text-gray-500 font-normal">
                           No attachments available.
+                        </div>
+                      ) : null}
+
+                      {step.isPartChange && (oldPartAttachment || newPartAttachment) && (
+                        <div className="flex flex-col gap-1.5 mt-1.5 border-t border-gray-150 pt-1.5">
+                          {oldPartAttachment && (
+                            <div className="text-blue-600 font-medium text-xs flex items-center justify-between bg-amber-50/50 border border-amber-200 p-2 rounded-md">
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                {oldPartAttachmentUrl ? (
+                                  <img src={oldPartAttachmentUrl} className="w-7 h-7 rounded object-cover border border-amber-200 shrink-0" alt="old part" />
+                                ) : (
+                                  <FileText size={12} className="text-amber-500 shrink-0" />
+                                )}
+                                <span className="truncate max-w-[200px] text-amber-800 ml-1 font-semibold">Old Part: {oldPartAttachment}</span>
+                              </div>
+                              {!isReadOnly && (
+                                <button
+                                  onClick={() => {
+                                    setOldPartAttachment("");
+                                    setOldPartAttachmentUrl("");
+                                  }}
+                                  className="text-red-500 hover:text-red-700 text-[10px] font-bold ml-2 shrink-0"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {newPartAttachment && (
+                            <div className="text-blue-600 font-medium text-xs flex items-center justify-between bg-emerald-50/50 border border-emerald-200 p-2 rounded-md">
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                {newPartAttachmentUrl ? (
+                                  <img src={newPartAttachmentUrl} className="w-7 h-7 rounded object-cover border border-emerald-200 shrink-0" alt="new part" />
+                                ) : (
+                                  <FileText size={12} className="text-emerald-500 shrink-0" />
+                                )}
+                                <span className="truncate max-w-[200px] text-emerald-800 ml-1 font-semibold">New Part: {newPartAttachment}</span>
+                              </div>
+                              {!isReadOnly && (
+                                <button
+                                  onClick={() => {
+                                    setNewPartAttachment("");
+                                    setNewPartAttachmentUrl("");
+                                  }}
+                                  className="text-red-500 hover:text-red-700 text-[10px] font-bold ml-2 shrink-0"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {step.isPartChange && !oldPartAttachment && !newPartAttachment && (
+                        <div className="text-sm text-gray-500 font-normal">
+                          No part evidence uploaded. Click the replacement icon to upload.
                         </div>
                       )}
                     </div>
@@ -1523,6 +2392,186 @@ export function MyTaskPage() {
             </div>
           </div>
 
+      {/* Part Replacement Evidence Modal */}
+      {partModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl overflow-hidden w-full max-w-2xl shadow-2xl flex flex-col animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <span className="text-gray-900 font-semibold text-lg block">Part Replacement Evidence</span>
+                <span className="text-gray-500 text-xs mt-0.5">Please provide photos or files for both the old and new parts.</span>
+              </div>
+              <button onClick={() => setPartModalOpen(false)} className="text-gray-500 hover:text-gray-800 p-1.5 rounded-full hover:bg-gray-100 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 bg-white">
+              {/* Old Part Card */}
+              <div className="border border-gray-200 rounded-xl p-4 flex flex-col gap-3 bg-gray-50/50">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                  <span className="text-gray-800 font-bold text-sm uppercase tracking-wide">1. Old Part (Removed)</span>
+                  {oldPartAttachment && (
+                    <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded font-semibold">Ready</span>
+                  )}
+                </div>
+
+                {oldPartAttachment ? (
+                  <div className="flex flex-col items-center gap-2 py-2 flex-1 justify-center">
+                    {oldPartAttachmentUrl ? (
+                      <img src={oldPartAttachmentUrl} className="w-24 h-24 rounded-lg object-cover border border-gray-200 shadow-sm" alt="Old Part" />
+                    ) : (
+                      <FileText size={40} className="text-gray-400" />
+                    )}
+                    <span className="text-xs text-gray-700 font-medium truncate max-w-full px-2" title={oldPartAttachment}>
+                      {oldPartAttachment}
+                    </span>
+                    <div className="flex gap-2 w-full mt-1">
+                      {oldPartAttachmentUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setEnlargedImage(oldPartAttachmentUrl)}
+                          className="flex-1 py-1 px-2 text-xs border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded font-medium"
+                        >
+                          View
+                        </button>
+                      )}
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOldPartAttachment("");
+                            setOldPartAttachmentUrl("");
+                          }}
+                          className="flex-1 py-1 px-2 text-xs border border-red-200 text-red-500 bg-white hover:bg-red-50 rounded font-medium"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2.5 items-center justify-center py-6 flex-1 text-center border-2 border-dashed border-gray-200 rounded-lg bg-white">
+                    <span className="text-xs text-gray-400 font-normal px-4">No evidence uploaded yet</span>
+                    {!isReadOnly && (
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadTarget("old");
+                            startCamera();
+                          }}
+                          className="flex items-center gap-1 bg-[#3A5764] hover:bg-[#2f4a55] text-white px-3 py-1.5 rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                        >
+                          <Camera size={14} /> Capture
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadTarget("old");
+                            handleTriggerUpload();
+                          }}
+                          className="flex items-center gap-1 border border-gray-300 hover:bg-gray-50 text-gray-750 px-3 py-1.5 rounded text-xs font-semibold bg-white transition-colors cursor-pointer"
+                        >
+                          <Upload size={14} /> Upload
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* New Part Card */}
+              <div className="border border-gray-200 rounded-xl p-4 flex flex-col gap-3 bg-gray-50/50">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                  <span className="text-gray-800 font-bold text-sm uppercase tracking-wide">2. New Part (Installed)</span>
+                  {newPartAttachment && (
+                    <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded font-semibold">Ready</span>
+                  )}
+                </div>
+
+                {newPartAttachment ? (
+                  <div className="flex flex-col items-center gap-2 py-2 flex-1 justify-center">
+                    {newPartAttachmentUrl ? (
+                      <img src={newPartAttachmentUrl} className="w-24 h-24 rounded-lg object-cover border border-gray-200 shadow-sm" alt="New Part" />
+                    ) : (
+                      <FileText size={40} className="text-gray-400" />
+                    )}
+                    <span className="text-xs text-gray-700 font-medium truncate max-w-full px-2" title={newPartAttachment}>
+                      {newPartAttachment}
+                    </span>
+                    <div className="flex gap-2 w-full mt-1">
+                      {newPartAttachmentUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setEnlargedImage(newPartAttachmentUrl)}
+                          className="flex-1 py-1 px-2 text-xs border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded font-medium"
+                        >
+                          View
+                        </button>
+                      )}
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewPartAttachment("");
+                            setNewPartAttachmentUrl("");
+                          }}
+                          className="flex-1 py-1 px-2 text-xs border border-red-200 text-red-500 bg-white hover:bg-red-50 rounded font-medium"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2.5 items-center justify-center py-6 flex-1 text-center border-2 border-dashed border-gray-200 rounded-lg bg-white">
+                    <span className="text-xs text-gray-400 font-normal px-4">No evidence uploaded yet</span>
+                    {!isReadOnly && (
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadTarget("new");
+                            startCamera();
+                          }}
+                          className="flex items-center gap-1 bg-[#3A5764] hover:bg-[#2f4a55] text-white px-3 py-1.5 rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                        >
+                          <Camera size={14} /> Capture
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadTarget("new");
+                            handleTriggerUpload();
+                          }}
+                          className="flex items-center gap-1 border border-gray-300 hover:bg-gray-50 text-gray-750 px-3 py-1.5 rounded text-xs font-semibold bg-white transition-colors cursor-pointer"
+                        >
+                          <Upload size={14} /> Upload
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPartModalOpen(false)}
+                className="px-6 py-2 bg-[#3A5764] hover:bg-[#2f4a55] text-white rounded font-medium text-xs tracking-wider transition-colors shadow-sm cursor-pointer"
+              >
+                CONFIRM & CLOSE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Lightbox Dialog Enlarger Overlay */}
       {enlargedImage && (
         <div 
@@ -1542,14 +2591,17 @@ export function MyTaskPage() {
           />
         </div>
       )}
+          </>
+        );
+      })()}
 
-      {/* Webcam Device Capture Dialog Modal */}
+      {/* Webcam Device Capture Dialog Modal — rendered at top level so it works from ANY modal (Prerequisites or SOP) */}
       {webcamModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-xl overflow-hidden w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in-95 duration-200">
             <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
               <span className="text-gray-900 font-semibold">Camera Capture</span>
-              <button onClick={stopCamera} className="text-gray-500 hover:text-gray-805">
+              <button onClick={stopCamera} className="text-gray-500 hover:text-gray-800">
                 <X size={20} />
               </button>
             </div>
@@ -1567,7 +2619,7 @@ export function MyTaskPage() {
                 <div className="w-12 h-12 border-t-2 border-r-2 border-white/40 absolute top-0 right-0"></div>
                 <div className="w-12 h-12 border-b-2 border-l-2 border-white/40 absolute bottom-0 left-0"></div>
                 <div className="w-12 h-12 border-b-2 border-r-2 border-white/40 absolute bottom-0 right-0"></div>
-                <span className="text-white/40 text-xs text-center font-medium px-4">Center workpiece in viewfinder</span>
+                <span className="text-white/40 text-xs text-center font-medium px-4"></span>
               </div>
             </div>
 
@@ -1589,10 +2641,7 @@ export function MyTaskPage() {
             </div>
           </div>
         </div>
-            )}
-          </>
-        );
-      })()}
+      )}
 
       {/* Action Modals */}
       {selectedTask && actionType && (
