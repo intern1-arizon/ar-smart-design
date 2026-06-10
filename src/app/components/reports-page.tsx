@@ -837,6 +837,8 @@ export function ReportsPage() {
         setPerfAttachment(file.name);
         setPerfAttachmentUrl(URL.createObjectURL(file));
       }
+      // Reset input value to allow uploading the same file again
+      e.target.value = "";
     }
   };
 

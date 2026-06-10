@@ -105,7 +105,7 @@ export function GenerateScheduleModal({ onClose, onGenerate }: Props) {
   const [sopIds, setSopIds] = useState<Set<string>>(new Set());
 
   // Load actual configured machines list dynamically
-  const machinesList = useMemo(() => {
+  const machinesList = useMemo<Machine[]>(() => {
     try {
       const saved = localStorage.getItem("arizon_machines");
       return saved ? JSON.parse(saved) : defaultMachines;

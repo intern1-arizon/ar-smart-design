@@ -521,7 +521,7 @@ export const validateStep = (
   }
 
   // 2. Camera Attachment Check
-  if (step.type === "camera" && !attachment) {
+  if (step.type === "camera" && !step.isPartChange && !attachment) {
     return { isValid: false, error: "Please attach a photo for this step." };
   }
 
@@ -1389,6 +1389,8 @@ export function MyTaskPage() {
         setStepAttachment(file.name);
         setStepAttachmentUrl(URL.createObjectURL(file));
       }
+      // Reset input value to allow uploading the same file again
+      e.target.value = "";
     }
   };
 
